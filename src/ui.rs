@@ -11,6 +11,7 @@ use crate::app::{App, Mode};
 
 const ZEBRA_DARK: Color = Color::Rgb(30, 30, 40);
 const HIGHLIGHT_BG: Color = Color::Rgb(55, 55, 80);
+const HIGHLIGHTED_BG: Color = Color::Rgb(50, 50, 20);
 const DIM: Color = Color::Rgb(100, 100, 110);
 const ACCENT: Color = Color::Rgb(180, 180, 255);
 
@@ -83,6 +84,10 @@ pub fn draw(f: &mut Frame, app: &App) {
     draw_status_bar(f, app, chunks[1]);
 
     match app.mode {
+        Mode::ConfirmBrowser => {
+            dim_background(f);
+            draw_confirm_browser_modal(f, app);
+        }
         Mode::FilterEditor | Mode::FilterAdding => {
             dim_background(f);
             draw_filter_modal(f, app);
@@ -90,9 +95,15 @@ pub fn draw(f: &mut Frame, app: &App) {
         Mode::TicketDetail
         | Mode::DetailAddingComment
         | Mode::DetailEditingComment
-        | Mode::DetailConfirmDelete => {
+        | Mode::DetailConfirmDelete
+        | Mode::DetailTransition => {
             dim_background(f);
             draw_detail_modal(f, app);
+        }
+        Mode::DetailConfirmTransition => {
+            dim_background(f);
+            draw_detail_modal(f, app);
+            draw_confirm_transition_modal(f, app);
         }
         _ => {}
     }
@@ -271,7 +282,6 @@ fn draw_table(f: &mut Frame, app: &App, area: Rect) {
             let depth_prefix = if display_row.depth > 0 { "  └ " } else { "" };
             let key_summary = format!("{} {}", issue.key, issue.summary);
             let prefix_len = depth_prefix.chars().count() + icon.chars().count() + 1;
-            let key_summary_text = truncate(&key_summary, work_chars.saturating_sub(prefix_len));
 
             let note = app.notes.get(&issue.key).cloned().unwrap_or_default();
             let note_text = if app.mode == Mode::EditingNote && i == app.selected {
@@ -286,7 +296,10 @@ fn draw_table(f: &mut Frame, app: &App, area: Rect) {
             let base_fg = if is_parent { DIM } else { Color::White };
             let base_style = Style::default().fg(base_fg);
 
-            let bg = if i % 2 == 1 {
+            let is_highlighted = app.highlighted_keys.contains(&issue.key);
+            let bg = if is_highlighted {
+                HIGHLIGHTED_BG
+            } else if i % 2 == 1 {
                 ZEBRA_DARK
             } else {
                 Color::Reset
@@ -306,7 +319,8 @@ fn draw_table(f: &mut Frame, app: &App, area: Rect) {
 
             let note_style = Style::default().fg(Color::Rgb(140, 200, 255)).bg(bg);
 
-            let ic = if is_parent { DIM } else { icon_color };
+            let ic = icon_color;
+            let key_summary_text = truncate(&key_summary, work_chars.saturating_sub(prefix_len));
             let work_cell = Cell::from(Line::from(vec![
                 Span::styled(depth_prefix.to_string(), base_style.bg(bg)),
                 Span::styled(icon.to_string(), Style::default().fg(ic).bg(bg)),
@@ -376,6 +390,113 @@ fn draw_table(f: &mut Frame, app: &App, area: Rect) {
     state.select(Some(app.selected));
 
     f.render_stateful_widget(table, area, &mut state);
+}
+
+// ── Confirm browser modal ────────────────────────────────────
+
+fn draw_confirm_browser_modal(f: &mut Frame, app: &App) {
+    let key = app
+        .rows
+        .get(app.selected)
+        .map(|r| r.issue.key.as_str())
+        .unwrap_or("");
+
+    let area = f.area();
+    let width = 44u16.min(area.width.saturating_sub(4));
+    let height = 6u16;
+    let x = (area.width.saturating_sub(width)) / 2;
+    let y = (area.height.saturating_sub(height)) / 2;
+    let modal_area = Rect::new(x, y, width, height);
+
+    f.render_widget(Clear, modal_area);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(ACCENT))
+        .title(Span::styled(
+            " Open in Browser ",
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ));
+
+    let inner = block.inner(modal_area);
+    f.render_widget(block, modal_area);
+
+    let lines = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            format!("  Open {key} in browser?"),
+            Style::default().fg(Color::White),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "  y/Enter:Confirm  n/Esc:Cancel",
+            Style::default().fg(Color::Rgb(100, 100, 120)),
+        )),
+    ];
+
+    f.render_widget(Paragraph::new(lines), inner);
+}
+
+// ── Confirm transition modal ─────────────────────────────────
+
+fn draw_confirm_transition_modal(f: &mut Frame, app: &App) {
+    let key = app
+        .detail
+        .as_ref()
+        .map(|d| d.key.as_str())
+        .unwrap_or("");
+    let target = app
+        .transitions
+        .get(app.transition_selected)
+        .map(|t| t.name.as_str())
+        .unwrap_or("");
+
+    let area = f.area();
+    let width = 52u16.min(area.width.saturating_sub(4));
+    let height = 7u16;
+    let x = (area.width.saturating_sub(width)) / 2;
+    let y = (area.height.saturating_sub(height)) / 2;
+    let modal_area = Rect::new(x, y, width, height);
+
+    f.render_widget(Clear, modal_area);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(ACCENT))
+        .title(Span::styled(
+            " Confirm Transition ",
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ));
+
+    let inner = block.inner(modal_area);
+    f.render_widget(block, modal_area);
+
+    let lines = vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  ", Style::default()),
+            Span::styled(
+                key.to_string(),
+                Style::default()
+                    .fg(ACCENT)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" \u{2192} ", Style::default().fg(Color::White)),
+            Span::styled(
+                target.to_string(),
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(
+            "  y/Enter:Confirm  n/Esc:Cancel",
+            Style::default().fg(Color::Rgb(100, 100, 120)),
+        )),
+    ];
+
+    f.render_widget(Paragraph::new(lines), inner);
 }
 
 // ── Filter modal ────────────────────────────────────────────
@@ -532,10 +653,13 @@ fn draw_detail_modal(f: &mut Frame, app: &App) {
     let input_editing =
         app.mode == Mode::DetailAddingComment || app.mode == Mode::DetailEditingComment;
     let confirm_deleting = app.mode == Mode::DetailConfirmDelete;
+    let picking_transition = app.mode == Mode::DetailTransition;
     let bottom_reserve: u16 = if input_editing {
         4
     } else if confirm_deleting {
         2
+    } else if picking_transition {
+        (app.transitions.len() as u16 + 3).min(inner.height / 2)
     } else {
         1
     };
@@ -687,15 +811,17 @@ fn draw_detail_modal(f: &mut Frame, app: &App) {
 
     f.render_widget(paragraph, content_area);
 
-    // Scrollbar
-    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-        .begin_symbol(None)
-        .end_symbol(None)
-        .thumb_style(Style::default().fg(ACCENT))
-        .track_style(Style::default().fg(Color::Rgb(40, 40, 60)));
-    let mut scrollbar_state = ScrollbarState::new(total_lines)
-        .position(app.detail_scroll as usize);
-    f.render_stateful_widget(scrollbar, content_area, &mut scrollbar_state);
+    // Scrollbar (only if content overflows)
+    if total_lines > content_area.height as usize {
+        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(None)
+            .end_symbol(None)
+            .thumb_style(Style::default().fg(ACCENT))
+            .track_style(Style::default().fg(Color::Rgb(40, 40, 60)));
+        let mut scrollbar_state = ScrollbarState::new(total_lines)
+            .position(app.detail_scroll as usize);
+        f.render_stateful_widget(scrollbar, content_area, &mut scrollbar_state);
+    }
 
     app.detail_lines.set(total_lines);
 
@@ -762,9 +888,58 @@ fn draw_detail_modal(f: &mut Frame, app: &App) {
             "Esc:Cancel",
             Style::default().fg(Color::Rgb(100, 100, 120)),
         )));
+    } else if picking_transition {
+        let label = "Transition to";
+        bottom_lines.push(Line::from(Span::styled(
+            format!(
+                "┌─ {label} {}",
+                "─".repeat(inner_w.saturating_sub(label.len() + 4))
+            ),
+            Style::default().fg(Color::Rgb(100, 100, 140)),
+        )));
+
+        let current_status = app.detail.as_ref().map(|d| d.status.as_str()).unwrap_or("");
+
+        for (i, t) in app.transitions.iter().enumerate() {
+            let selected = i == app.transition_selected;
+            let is_current = t.to_status == current_status;
+            let marker = if selected { "▶ " } else { "  " };
+            let mut spans = vec![
+                Span::styled(
+                    format!("│ {marker}"),
+                    Style::default().fg(Color::Rgb(100, 100, 140)),
+                ),
+                Span::styled(
+                    t.name.clone(),
+                    if selected {
+                        Style::default()
+                            .fg(Color::White)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(Color::Rgb(180, 180, 200))
+                    },
+                ),
+            ];
+            if is_current {
+                spans.push(Span::styled(
+                    " (current)",
+                    Style::default().fg(Color::DarkGray),
+                ));
+            }
+            bottom_lines.push(Line::from(spans));
+        }
+
+        bottom_lines.push(Line::from(Span::styled(
+            format!("└{}", "─".repeat(inner_w.saturating_sub(1))),
+            Style::default().fg(Color::Rgb(100, 100, 140)),
+        )));
+        bottom_lines.push(Line::from(Span::styled(
+            "↑↓:Navigate  Enter:Confirm  Esc:Cancel",
+            Style::default().fg(Color::Rgb(100, 100, 120)),
+        )));
     } else {
         bottom_lines.push(Line::from(Span::styled(
-            "↑↓:Scroll  n/p:Comment  y:Copy  c:Add  e:Edit  x:Del  Enter:Browser  Esc:Close",
+            "↑↓:Scroll  n/p:Comment  y:Copy  c:Add  e:Edit  x:Del  t:Transition  Enter:Browser  Esc:Close",
             Style::default().fg(Color::Rgb(100, 100, 120)),
         )));
     }
@@ -1168,8 +1343,18 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
                     .fg(Color::White),
             ),
             format!(
-                " q:Quit  j/k:Nav  d:Detail  Enter:Open  n:Note  f:Filter  {tree_label}  r:Refresh  ?:Legend "
+                " q:Quit  j/k:Nav  Enter:Open  w:Browser  n:Note  h:Highlight  f:Filter  {tree_label}  r:Refresh  ?:Legend "
             ),
+        ),
+        Mode::ConfirmBrowser => (
+            Span::styled(
+                " OPEN IN BROWSER ",
+                Style::default()
+                    .bg(Color::Rgb(180, 130, 50))
+                    .fg(Color::Black)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            " y/Enter:Confirm  n/Esc:Cancel ".to_string(),
         ),
         Mode::EditingNote => (
             Span::styled(
@@ -1231,6 +1416,26 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
                     .add_modifier(Modifier::BOLD),
             ),
             " y:Confirm  n/Esc:Cancel ".to_string(),
+        ),
+        Mode::DetailTransition => (
+            Span::styled(
+                " TRANSITION ",
+                Style::default()
+                    .bg(Color::Rgb(80, 160, 80))
+                    .fg(Color::Black)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            " ↑↓:Navigate  Enter:Confirm  Esc:Cancel ".to_string(),
+        ),
+        Mode::DetailConfirmTransition => (
+            Span::styled(
+                " CONFIRM TRANSITION ",
+                Style::default()
+                    .bg(Color::Rgb(180, 130, 50))
+                    .fg(Color::Black)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            " y/Enter:Confirm  n/Esc:Cancel ".to_string(),
         ),
     };
 

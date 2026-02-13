@@ -20,6 +20,7 @@ pub struct JiraIssue {
 pub struct IssueDetail {
     pub key: String,
     pub issue_type: String,
+    pub status: String,
     pub summary: String,
     pub description: String,
     pub comments: Vec<Comment>,
@@ -238,7 +239,7 @@ pub async fn fetch_issue_detail(
     let resp = client
         .get(&url)
         .basic_auth(&config.email, Some(&config.api_token))
-        .query(&[("fields", "summary,description,comment,issuetype")])
+        .query(&[("fields", "summary,description,comment,issuetype,status")])
         .send()
         .await
         .map_err(|e| format!("HTTP request failed: {e}"))?;
@@ -306,9 +307,15 @@ pub async fn fetch_issue_detail(
         .unwrap_or("")
         .to_string();
 
+    let status = fields["status"]["name"]
+        .as_str()
+        .unwrap_or("")
+        .to_string();
+
     Ok(IssueDetail {
         key: key.to_string(),
         issue_type,
+        status,
         summary,
         description,
         comments,
@@ -543,6 +550,92 @@ pub async fn delete_comment(
     let resp = client
         .delete(&url)
         .basic_auth(&config.email, Some(&config.api_token))
+        .send()
+        .await
+        .map_err(|e| format!("HTTP request failed: {e}"))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("Jira API error {status}: {body}"));
+    }
+
+    Ok(())
+}
+
+// --- Transitions ---
+
+pub struct Transition {
+    pub id: String,
+    pub name: String,
+    pub to_status: String,
+}
+
+pub async fn fetch_transitions(
+    config: &Config,
+    issue_key: &str,
+) -> Result<Vec<Transition>, String> {
+    let url = format!(
+        "{}/rest/api/3/issue/{}/transitions",
+        config.jira_url.trim_end_matches('/'),
+        issue_key
+    );
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(&url)
+        .basic_auth(&config.email, Some(&config.api_token))
+        .send()
+        .await
+        .map_err(|e| format!("HTTP request failed: {e}"))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("Jira API error {status}: {body}"));
+    }
+
+    let json: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse: {e}"))?;
+
+    let transitions = json["transitions"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .map(|t| Transition {
+                    id: t["id"].as_str().unwrap_or("").to_string(),
+                    name: t["name"].as_str().unwrap_or("").to_string(),
+                    to_status: t["to"]["name"].as_str().unwrap_or("").to_string(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    Ok(transitions)
+}
+
+pub async fn do_transition(
+    config: &Config,
+    issue_key: &str,
+    transition_id: &str,
+) -> Result<(), String> {
+    let url = format!(
+        "{}/rest/api/3/issue/{}/transitions",
+        config.jira_url.trim_end_matches('/'),
+        issue_key
+    );
+
+    let payload = serde_json::json!({
+        "transition": { "id": transition_id }
+    });
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(&url)
+        .basic_auth(&config.email, Some(&config.api_token))
+        .json(&payload)
         .send()
         .await
         .map_err(|e| format!("HTTP request failed: {e}"))?;

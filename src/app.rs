@@ -2,7 +2,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
 use crate::config::{Config, StatusFilter};
-use crate::jira::{self, IssueDetail};
+use crate::jira::{self, IssueDetail, Transition};
 use crate::notes;
 
 #[derive(PartialEq)]
@@ -12,9 +12,12 @@ pub enum Mode {
     FilterEditor,
     FilterAdding,
     TicketDetail,
+    ConfirmBrowser,
     DetailAddingComment,
     DetailEditingComment,
     DetailConfirmDelete,
+    DetailTransition,
+    DetailConfirmTransition,
 }
 
 pub struct DisplayRow {
@@ -29,6 +32,7 @@ pub struct App {
     pub mode: Mode,
     pub note_input: String,
     pub notes: HashMap<String, String>,
+    pub highlighted_keys: std::collections::HashSet<String>,
     pub config: Config,
     pub status_msg: String,
     pub show_all_parents: bool,
@@ -51,6 +55,9 @@ pub struct App {
     pub detail_content_height: Cell<u16>,
     // Comment line offsets (set during rendering, used for auto-scroll)
     pub detail_comment_offsets: RefCell<Vec<usize>>,
+    // Transition picker state
+    pub transitions: Vec<Transition>,
+    pub transition_selected: usize,
     // Current user identity
     pub current_account_id: String,
     // Legend toggle
@@ -60,12 +67,14 @@ pub struct App {
 impl App {
     pub fn new(config: Config) -> Self {
         let notes = notes::load_notes();
+        let highlighted_keys = notes::load_highlights();
         App {
             rows: Vec::new(),
             selected: 0,
             mode: Mode::Normal,
             note_input: String::new(),
             notes,
+            highlighted_keys,
             config,
             status_msg: String::new(),
             show_all_parents: false,
@@ -82,6 +91,8 @@ impl App {
             detail_content_y: Cell::new(0),
             detail_content_height: Cell::new(0),
             detail_comment_offsets: RefCell::new(Vec::new()),
+            transitions: Vec::new(),
+            transition_selected: 0,
             current_account_id: String::new(),
             show_legend: false,
         }
@@ -138,7 +149,13 @@ impl App {
         }
     }
 
-    pub fn open_in_browser(&self) {
+    pub fn confirm_open_in_browser(&mut self) {
+        if self.rows.get(self.selected).is_some() {
+            self.mode = Mode::ConfirmBrowser;
+        }
+    }
+
+    pub fn open_in_browser(&mut self) {
         if let Some(row) = self.rows.get(self.selected) {
             let url = format!(
                 "{}/browse/{}",
@@ -147,6 +164,11 @@ impl App {
             );
             let _ = open::that(&url);
         }
+        self.mode = Mode::Normal;
+    }
+
+    pub fn cancel_browser(&mut self) {
+        self.mode = Mode::Normal;
     }
 
     pub fn start_editing_note(&mut self) {
@@ -178,6 +200,16 @@ impl App {
     pub fn cancel_edit(&mut self) {
         self.note_input.clear();
         self.mode = Mode::Normal;
+    }
+
+    pub fn toggle_highlight(&mut self) {
+        if let Some(row) = self.rows.get(self.selected) {
+            let key = row.issue.key.clone();
+            if !self.highlighted_keys.remove(&key) {
+                self.highlighted_keys.insert(key);
+            }
+            notes::save_highlights(&self.highlighted_keys);
+        }
     }
 
     // --- Ticket detail ---
@@ -213,7 +245,8 @@ impl App {
     }
 
     pub fn detail_scroll_down(&mut self) {
-        if (self.detail_scroll as usize) < self.detail_lines.get().saturating_sub(1) {
+        let total = self.detail_lines.get();
+        if (self.detail_scroll as usize) + 1 < total {
             self.detail_scroll += 1;
         }
     }
@@ -450,6 +483,88 @@ impl App {
             }
             Err(e) => {
                 self.status_msg = format!("Error refreshing: {e}");
+            }
+        }
+    }
+
+    // --- Transitions ---
+
+    pub async fn open_transition_picker(&mut self) {
+        let key = match &self.detail {
+            Some(d) => d.key.clone(),
+            None => return,
+        };
+        self.status_msg = "Loading transitions...".to_string();
+        match jira::fetch_transitions(&self.config, &key).await {
+            Ok(transitions) => {
+                if transitions.is_empty() {
+                    self.status_msg = "No transitions available".to_string();
+                    return;
+                }
+                self.transitions = transitions;
+                self.transition_selected = 0;
+                self.mode = Mode::DetailTransition;
+                self.status_msg.clear();
+            }
+            Err(e) => {
+                self.status_msg = format!("Error: {e}");
+            }
+        }
+    }
+
+    pub fn transition_move_up(&mut self) {
+        if self.transition_selected > 0 {
+            self.transition_selected -= 1;
+        }
+    }
+
+    pub fn transition_move_down(&mut self) {
+        if !self.transitions.is_empty()
+            && self.transition_selected < self.transitions.len() - 1
+        {
+            self.transition_selected += 1;
+        }
+    }
+
+    pub fn cancel_transition(&mut self) {
+        self.transitions.clear();
+        self.mode = Mode::TicketDetail;
+    }
+
+    pub fn confirm_transition(&mut self) {
+        if self.transitions.get(self.transition_selected).is_some() {
+            self.mode = Mode::DetailConfirmTransition;
+        }
+    }
+
+    pub fn cancel_confirm_transition(&mut self) {
+        self.mode = Mode::DetailTransition;
+    }
+
+    pub async fn execute_transition(&mut self) {
+        let transition = match self.transitions.get(self.transition_selected) {
+            Some(t) => t,
+            None => return,
+        };
+        let key = match &self.detail {
+            Some(d) => d.key.clone(),
+            None => return,
+        };
+        let name = transition.name.clone();
+        let id = transition.id.clone();
+        self.status_msg = format!("Transitioning to {name}...");
+        match jira::do_transition(&self.config, &key, &id).await {
+            Ok(()) => {
+                self.transitions.clear();
+                self.mode = Mode::TicketDetail;
+                self.refresh().await;
+                self.refresh_detail(&key).await;
+                self.status_msg = format!("Transitioned to {name}");
+            }
+            Err(e) => {
+                self.status_msg = format!("Error: {e}");
+                self.transitions.clear();
+                self.mode = Mode::TicketDetail;
             }
         }
     }

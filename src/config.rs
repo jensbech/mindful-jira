@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::Path;
+use std::path::PathBuf;
 
 #[derive(Deserialize, Serialize, Clone)]
 pub struct StatusFilter {
@@ -10,7 +10,7 @@ pub struct StatusFilter {
     pub excluded: bool,
 }
 
-fn default_status_filters() -> Vec<StatusFilter> {
+pub fn default_status_filters() -> Vec<StatusFilter> {
     [
         "Backlog",
         "Done",
@@ -36,23 +36,37 @@ pub struct Config {
     pub status_filters: Vec<StatusFilter>,
 }
 
+pub fn config_dir() -> PathBuf {
+    let dir = dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".config")
+        .join("mindful-jira");
+    let _ = fs::create_dir_all(&dir);
+    dir
+}
+
+fn config_path() -> PathBuf {
+    config_dir().join("config.json")
+}
+
 impl Config {
     pub fn load() -> Result<Self, String> {
-        let path = Path::new("jira-config.json");
+        let path = config_path();
         if !path.exists() {
             return Err(
-                "jira-config.json not found. Copy jira-config.json.example to jira-config.json and fill in your credentials.".to_string()
+                "Config not found. Run `mindful-jira setup` to configure.".to_string()
             );
         }
-        let contents = fs::read_to_string(path)
-            .map_err(|e| format!("Failed to read jira-config.json: {e}"))?;
+        let contents = fs::read_to_string(&path)
+            .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
         serde_json::from_str(&contents)
-            .map_err(|e| format!("Failed to parse jira-config.json: {e}"))
+            .map_err(|e| format!("Failed to parse {}: {e}", path.display()))
     }
 
     pub fn save(&self) {
+        let path = config_path();
         if let Ok(json) = serde_json::to_string_pretty(self) {
-            let _ = fs::write("jira-config.json", json);
+            let _ = fs::write(path, json);
         }
     }
 

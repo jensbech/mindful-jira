@@ -1,4 +1,4 @@
-# mindful-jira
+# Mindful Jira
 
 A terminal UI for viewing and managing your Jira issues, built with Rust and [ratatui](https://github.com/ratatui/ratatui).
 

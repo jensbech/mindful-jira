@@ -1,0 +1,1250 @@
+use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{
+    Block, Borders, Cell, Clear, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState,
+    Table, TableState, Wrap,
+};
+use ratatui::Frame;
+
+use crate::app::{App, Mode};
+
+const ZEBRA_DARK: Color = Color::Rgb(30, 30, 40);
+const HIGHLIGHT_BG: Color = Color::Rgb(55, 55, 80);
+const DIM: Color = Color::Rgb(100, 100, 110);
+const ACCENT: Color = Color::Rgb(180, 180, 255);
+
+fn issue_type_icon(issue_type: &str) -> (&'static str, Color) {
+    match issue_type {
+        "Bug" => ("●", Color::Rgb(229, 73, 58)),
+        "Story" | "User Story" => ("◆", Color::Rgb(99, 186, 60)),
+        "Task" => ("■", Color::Rgb(75, 173, 232)),
+        "Sub-task" | "Subtask" => ("▪", Color::Rgb(75, 173, 232)),
+        "Epic" => ("♦", Color::Rgb(144, 78, 226)),
+        "Improvement" => ("▲", Color::Rgb(99, 186, 60)),
+        "New Feature" | "Feature" => ("✦", Color::Rgb(99, 186, 60)),
+        "Spike" => ("◇", Color::Rgb(140, 140, 160)),
+        _ => ("•", Color::DarkGray),
+    }
+}
+
+fn split_at_char_pos(s: &str, pos: usize) -> (&str, &str) {
+    let byte_pos = s
+        .char_indices()
+        .nth(pos)
+        .map(|(i, _)| i)
+        .unwrap_or(s.len());
+    s.split_at(byte_pos)
+}
+
+fn visible_input(input: &str, cursor_pos: usize, max_chars: usize) -> String {
+    let char_count = input.chars().count();
+    if char_count + 1 <= max_chars {
+        let (before, after) = split_at_char_pos(input, cursor_pos);
+        return format!("{before}|{after}");
+    }
+    let budget = max_chars.saturating_sub(1);
+    let half = budget / 2;
+    let mut start = cursor_pos.saturating_sub(half);
+    let mut end = start + budget;
+    if end > char_count {
+        end = char_count;
+        start = end.saturating_sub(budget);
+    }
+    let left_ellipsis = start > 0;
+    let right_ellipsis = end < char_count;
+    if left_ellipsis {
+        start += 1;
+    }
+    if right_ellipsis && end > start {
+        end -= 1;
+    }
+    let visible: String = input.chars().skip(start).take(end - start).collect();
+    let cursor_in_vis = cursor_pos.saturating_sub(start);
+    let (before, after) = split_at_char_pos(&visible, cursor_in_vis);
+    let mut result = String::new();
+    if left_ellipsis {
+        result.push('\u{2026}');
+    }
+    result.push_str(before);
+    result.push('|');
+    result.push_str(after);
+    if right_ellipsis {
+        result.push('\u{2026}');
+    }
+    result
+}
+
+pub fn draw(f: &mut Frame, app: &App) {
+    let chunks =
+        Layout::vertical([Constraint::Min(3), Constraint::Length(1)]).split(f.area());
+
+    draw_table(f, app, chunks[0]);
+    draw_status_bar(f, app, chunks[1]);
+
+    match app.mode {
+        Mode::FilterEditor | Mode::FilterAdding => {
+            dim_background(f);
+            draw_filter_modal(f, app);
+        }
+        Mode::TicketDetail
+        | Mode::DetailAddingComment
+        | Mode::DetailEditingComment
+        | Mode::DetailConfirmDelete => {
+            dim_background(f);
+            draw_detail_modal(f, app);
+        }
+        _ => {}
+    }
+
+    if app.show_legend {
+        draw_legend(f);
+    }
+}
+
+fn dim_background(f: &mut Frame) {
+    let area = f.area();
+    let buf = f.buffer_mut();
+    for y in area.top()..area.bottom() {
+        for x in area.left()..area.right() {
+            if let Some(cell) = buf.cell_mut((x, y)) {
+                cell.set_fg(Color::Rgb(50, 50, 60));
+                cell.set_bg(Color::Rgb(10, 10, 15));
+            }
+        }
+    }
+}
+
+fn draw_legend(f: &mut Frame) {
+    let entries: &[(&str, &str, Color)] = &[
+        ("●", "Bug", Color::Rgb(229, 73, 58)),
+        ("◆", "Story", Color::Rgb(99, 186, 60)),
+        ("■", "Task", Color::Rgb(75, 173, 232)),
+        ("▪", "Sub-task", Color::Rgb(75, 173, 232)),
+        ("♦", "Epic", Color::Rgb(144, 78, 226)),
+        ("▲", "Improvement", Color::Rgb(99, 186, 60)),
+        ("✦", "New Feature", Color::Rgb(99, 186, 60)),
+        ("◇", "Spike", Color::Rgb(140, 140, 160)),
+    ];
+
+    let width: u16 = 20;
+    let height = entries.len() as u16 + 3; // entries + border + title + bottom padding
+    let area = f.area();
+    let x = area.width.saturating_sub(width + 2);
+    let y = area.height.saturating_sub(height + 2);
+    let legend_area = Rect::new(x, y, width, height);
+
+    f.render_widget(Clear, legend_area);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Rgb(80, 80, 110)))
+        .title(Span::styled(
+            " Types ",
+            Style::default()
+                .fg(Color::Rgb(180, 180, 200))
+                .add_modifier(Modifier::BOLD),
+        ));
+
+    let inner = block.inner(legend_area);
+    f.render_widget(block, legend_area);
+
+    let lines: Vec<Line> = entries
+        .iter()
+        .map(|(sym, label, color)| {
+            Line::from(vec![
+                Span::styled(format!(" {sym}"), Style::default().fg(*color)),
+                Span::styled(
+                    format!("  {label}"),
+                    Style::default().fg(Color::Rgb(180, 180, 200)),
+                ),
+            ])
+        })
+        .collect();
+
+    f.render_widget(Paragraph::new(lines), inner);
+}
+
+fn priority_style(priority: &str) -> Style {
+    match priority {
+        "Blocker" | "Critical" | "Highest" => {
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
+        }
+        "Major" | "High" => Style::default().fg(Color::Yellow),
+        "Normal" => Style::default().fg(Color::White),
+        "Medium" => Style::default().fg(Color::Cyan),
+        "Minor" | "Low" | "Trivial" | "Lowest" => Style::default().fg(Color::DarkGray),
+        _ => Style::default(),
+    }
+}
+
+fn status_style(status: &str) -> Style {
+    match status {
+        "In Progress" => Style::default().fg(Color::Green),
+        "In Test" | "In Review" => Style::default().fg(Color::Magenta),
+        s if s.starts_with("Selected") => Style::default().fg(Color::Blue),
+        "Open" | "Backlog" | "To Do" => Style::default().fg(Color::DarkGray),
+        _ => Style::default(),
+    }
+}
+
+fn truncate(s: &str, max: usize) -> String {
+    let count = s.chars().count();
+    if count <= max {
+        s.to_string()
+    } else if max <= 3 {
+        s.chars().take(max).collect()
+    } else {
+        let t: String = s.chars().take(max - 1).collect();
+        format!("{t}…")
+    }
+}
+
+// ── Main table ──────────────────────────────────────────────
+
+fn draw_table(f: &mut Frame, app: &App, area: Rect) {
+    let show_assignee = app.show_all_parents;
+
+    const ASSIGNEE_W: u16 = 16;
+    const REPORTER_W: u16 = 18;
+    const PRIORITY_W: u16 = 10;
+    const STATUS_W: u16 = 16;
+    const RESOLUTION_W: u16 = 12;
+    const CREATED_W: u16 = 12;
+    const COL_SPACING: u16 = 2;
+    const BORDERS: u16 = 2;
+    const HIGHLIGHT_SYM: u16 = 2;
+
+    let num_cols: u16 = if show_assignee { 8 } else { 7 };
+    let assignee_total = if show_assignee { ASSIGNEE_W } else { 0 };
+
+    let fixed = assignee_total
+        + REPORTER_W
+        + PRIORITY_W
+        + STATUS_W
+        + RESOLUTION_W
+        + CREATED_W
+        + (COL_SPACING * (num_cols - 1))
+        + BORDERS
+        + HIGHLIGHT_SYM;
+
+    let remaining = area.width.saturating_sub(fixed);
+    let work_w = ((remaining as u32 * 3 / 4) as u16).max(20);
+    let notes_w = remaining.saturating_sub(work_w).max(10);
+
+    let work_chars = work_w as usize;
+    let notes_chars = notes_w as usize;
+    let assignee_chars = ASSIGNEE_W as usize;
+    let reporter_chars = REPORTER_W as usize;
+    let status_chars = STATUS_W as usize;
+
+    let header_style = Style::default()
+        .fg(Color::Rgb(180, 180, 200))
+        .add_modifier(Modifier::BOLD);
+
+    let mut header_cells = vec![Cell::from("Work")];
+    if show_assignee {
+        header_cells.push(Cell::from("Assignee"));
+    }
+    header_cells.extend([
+        Cell::from("Reporter"),
+        Cell::from("Priority"),
+        Cell::from("Status"),
+        Cell::from("Resolution"),
+        Cell::from("Created"),
+        Cell::from("My Notes"),
+    ]);
+
+    let header = Row::new(header_cells)
+        .style(header_style)
+        .bottom_margin(1);
+
+    let rows: Vec<Row> = app
+        .rows
+        .iter()
+        .enumerate()
+        .map(|(i, display_row)| {
+            let issue = &display_row.issue;
+            let is_parent = display_row.is_context_parent;
+
+            let (icon, icon_color) = issue_type_icon(&issue.issue_type);
+            let depth_prefix = if display_row.depth > 0 { "  └ " } else { "" };
+            let key_summary = format!("{} {}", issue.key, issue.summary);
+            let prefix_len = depth_prefix.chars().count() + icon.chars().count() + 1;
+            let key_summary_text = truncate(&key_summary, work_chars.saturating_sub(prefix_len));
+
+            let note = app.notes.get(&issue.key).cloned().unwrap_or_default();
+            let note_text = if app.mode == Mode::EditingNote && i == app.selected {
+                visible_input(&app.note_input, app.cursor_pos, notes_chars)
+            } else {
+                truncate(&note, notes_chars)
+            };
+
+            let reporter_text = truncate(&issue.reporter, reporter_chars);
+            let status_text = truncate(&issue.status, status_chars);
+
+            let base_fg = if is_parent { DIM } else { Color::White };
+            let base_style = Style::default().fg(base_fg);
+
+            let bg = if i % 2 == 1 {
+                ZEBRA_DARK
+            } else {
+                Color::Reset
+            };
+            let row_style = base_style.bg(bg);
+
+            let p_style = if is_parent {
+                Style::default().fg(DIM).bg(bg)
+            } else {
+                priority_style(&issue.priority).bg(bg)
+            };
+            let s_style = if is_parent {
+                Style::default().fg(DIM).bg(bg)
+            } else {
+                status_style(&issue.status).bg(bg)
+            };
+
+            let note_style = Style::default().fg(Color::Rgb(140, 200, 255)).bg(bg);
+
+            let ic = if is_parent { DIM } else { icon_color };
+            let work_cell = Cell::from(Line::from(vec![
+                Span::styled(depth_prefix.to_string(), base_style.bg(bg)),
+                Span::styled(icon.to_string(), Style::default().fg(ic).bg(bg)),
+                Span::styled(format!(" {key_summary_text}"), base_style.bg(bg)),
+            ]));
+            let mut cells = vec![work_cell];
+            if show_assignee {
+                let assignee_style = if is_parent {
+                    Style::default().fg(DIM)
+                } else {
+                    Style::default().fg(Color::DarkGray)
+                };
+                cells.push(Cell::from(Span::styled(
+                    truncate(&issue.assignee, assignee_chars),
+                    assignee_style.bg(bg),
+                )));
+            }
+            cells.extend([
+                Cell::from(Span::styled(reporter_text, base_style.bg(bg))),
+                Cell::from(Span::styled(issue.priority.clone(), p_style)),
+                Cell::from(Span::styled(status_text, s_style)),
+                Cell::from(Span::styled(issue.resolution.clone(), base_style.bg(bg))),
+                Cell::from(Span::styled(
+                    issue.created.clone(),
+                    Style::default().fg(Color::DarkGray).bg(bg),
+                )),
+                Cell::from(Span::styled(note_text, note_style)),
+            ]);
+
+            Row::new(cells).style(row_style)
+        })
+        .collect();
+
+    let mut widths = vec![Constraint::Length(work_w)];
+    if show_assignee {
+        widths.push(Constraint::Length(ASSIGNEE_W));
+    }
+    widths.extend([
+        Constraint::Length(REPORTER_W),
+        Constraint::Length(PRIORITY_W),
+        Constraint::Length(STATUS_W),
+        Constraint::Length(RESOLUTION_W),
+        Constraint::Length(CREATED_W),
+        Constraint::Length(notes_w),
+    ]);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Rgb(60, 60, 80)))
+        .title(Span::styled(
+            " My Jira Work ",
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ));
+
+    let table = Table::new(rows, widths)
+        .header(header)
+        .block(block)
+        .column_spacing(COL_SPACING)
+        .row_highlight_style(
+            Style::default()
+                .bg(HIGHLIGHT_BG)
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol("▶ ");
+
+    let mut state = TableState::default();
+    state.select(Some(app.selected));
+
+    f.render_stateful_widget(table, area, &mut state);
+}
+
+// ── Filter modal ────────────────────────────────────────────
+
+fn draw_filter_modal(f: &mut Frame, app: &App) {
+    let area = f.area();
+    let filter_count = app.config.status_filters.len() as u16;
+
+    let adding = app.mode == Mode::FilterAdding;
+    let inner_h = filter_count + 2 + if adding { 2 } else { 0 } + 3;
+    let height = (inner_h + 2).min(area.height.saturating_sub(4));
+    let width = 52u16.min(area.width.saturating_sub(4));
+
+    let x = (area.width.saturating_sub(width)) / 2;
+    let y = (area.height.saturating_sub(height)) / 2;
+    let modal_area = Rect::new(x, y, width, height);
+
+    f.render_widget(Clear, modal_area);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(ACCENT))
+        .title(Span::styled(
+            " Status Filters ",
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ));
+
+    let inner = block.inner(modal_area);
+    f.render_widget(block, modal_area);
+
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(Line::from(""));
+
+    for (i, sf) in app.config.status_filters.iter().enumerate() {
+        let selected = i == app.filter_selected && !adding;
+        let marker = if selected { "▶ " } else { "  " };
+
+        // excluded = hidden from results → ✕ red
+        // not excluded = visible in results → ✓ green
+        let (icon, icon_color, name_style) = if sf.excluded {
+            (
+                "✕",
+                Color::Red,
+                if selected {
+                    Style::default()
+                        .fg(Color::Rgb(200, 130, 130))
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::Rgb(180, 100, 100))
+                },
+            )
+        } else {
+            (
+                "✓",
+                Color::Green,
+                if selected {
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::Rgb(140, 200, 140))
+                },
+            )
+        };
+
+        lines.push(Line::from(vec![
+            Span::styled(
+                marker.to_string(),
+                Style::default().fg(Color::Rgb(140, 200, 255)),
+            ),
+            Span::styled(format!("{icon} "), Style::default().fg(icon_color)),
+            Span::styled(sf.name.clone(), name_style),
+        ]));
+    }
+
+    if app.config.status_filters.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "  (no filters)",
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+
+    if adding {
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::styled("  New: ", Style::default().fg(Color::Rgb(140, 200, 255))),
+            Span::styled(
+                visible_input(
+                    &app.filter_input,
+                    app.cursor_pos,
+                    inner.width as usize - 7,
+                ),
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]));
+    }
+
+    lines.push(Line::from(""));
+
+    if adding {
+        lines.push(Line::from(Span::styled(
+            "  Enter:Confirm  Esc:Cancel",
+            Style::default().fg(Color::Rgb(100, 100, 120)),
+        )));
+    } else {
+        lines.push(Line::from(Span::styled(
+            "  ↑↓:Navigate  Space:Toggle  a:Add  d:Delete",
+            Style::default().fg(Color::Rgb(100, 100, 120)),
+        )));
+        lines.push(Line::from(Span::styled(
+            "  Enter:Apply & Refresh  Esc:Close",
+            Style::default().fg(Color::Rgb(100, 100, 120)),
+        )));
+    }
+
+    f.render_widget(Paragraph::new(lines), inner);
+}
+
+// ── Ticket detail modal ─────────────────────────────────────
+
+fn draw_detail_modal(f: &mut Frame, app: &App) {
+    let detail = match &app.detail {
+        Some(d) => d,
+        None => return,
+    };
+
+    let area = f.area();
+    let width = area.width.saturating_sub(6).min(120);
+    let height = area.height.saturating_sub(4);
+    let x = (area.width.saturating_sub(width)) / 2;
+    let y = (area.height.saturating_sub(height)) / 2;
+    let modal_area = Rect::new(x, y, width, height);
+
+    f.render_widget(Clear, modal_area);
+
+    let (icon, icon_color) = issue_type_icon(&detail.issue_type);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(ACCENT))
+        .title(Line::from(vec![
+            Span::styled(" ", Style::default()),
+            Span::styled(icon.to_string(), Style::default().fg(icon_color)),
+            Span::styled(
+                format!(" {} ", detail.key),
+                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            ),
+        ]));
+
+    let inner = block.inner(modal_area);
+    f.render_widget(block, modal_area);
+
+    let input_editing =
+        app.mode == Mode::DetailAddingComment || app.mode == Mode::DetailEditingComment;
+    let confirm_deleting = app.mode == Mode::DetailConfirmDelete;
+    let bottom_reserve: u16 = if input_editing {
+        4
+    } else if confirm_deleting {
+        2
+    } else {
+        1
+    };
+
+    let content_height = inner.height.saturating_sub(bottom_reserve);
+    let content_area = Rect::new(inner.x, inner.y, inner.width, content_height);
+    let bottom_area = Rect::new(
+        inner.x,
+        inner.y + content_height,
+        inner.width,
+        bottom_reserve,
+    );
+
+    let inner_w = inner.width as usize;
+
+    // Build content lines
+    let mut lines: Vec<Line> = Vec::new();
+
+    // Summary
+    for sub in word_wrap(&detail.summary, inner_w) {
+        lines.push(Line::from(Span::styled(
+            sub,
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        )));
+    }
+    lines.push(Line::from(""));
+
+    // Description separator
+    let rule_w = inner_w.min(80);
+    let desc_label = "── Description ";
+    let desc_rule_len = rule_w.saturating_sub(desc_label.len());
+    lines.push(Line::from(Span::styled(
+        format!("{}{}", desc_label, "─".repeat(desc_rule_len)),
+        Style::default().fg(ACCENT),
+    )));
+    lines.push(Line::from(""));
+
+    lines.extend(markdown_to_lines(&detail.description, inner_w));
+
+    lines.push(Line::from(""));
+
+    // Comments separator
+    let comment_count = detail.comments.len();
+    let comments_label = format!("── Comments ({comment_count}) ");
+    let comments_rule_len = rule_w.saturating_sub(comments_label.len());
+    lines.push(Line::from(Span::styled(
+        format!("{}{}", comments_label, "─".repeat(comments_rule_len)),
+        Style::default().fg(ACCENT),
+    )));
+
+    if detail.comments.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "  No comments",
+            Style::default().fg(Color::DarkGray),
+        )));
+    } else {
+        let comment_w = inner_w.saturating_sub(4);
+        let mut comment_offsets: Vec<usize> = Vec::new();
+        for (i, comment) in detail.comments.iter().enumerate() {
+            let is_selected = app.detail_comment_selected == Some(i);
+
+            comment_offsets.push(lines.len());
+            lines.push(Line::from(""));
+
+            let marker = if is_selected { "▶ " } else { "  " };
+            let num_label = format!("#{}", i + 1);
+
+            lines.push(Line::from(vec![
+                Span::styled(marker.to_string(), Style::default().fg(ACCENT)),
+                Span::styled(
+                    num_label,
+                    Style::default()
+                        .fg(Color::Rgb(180, 180, 200))
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled("  ", Style::default()),
+                Span::styled(
+                    comment.author.clone(),
+                    Style::default()
+                        .fg(Color::Rgb(140, 200, 255))
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("  {}", comment.created),
+                    Style::default().fg(Color::DarkGray),
+                ),
+            ]));
+
+            for md_line in markdown_to_lines(&comment.body, comment_w) {
+                let mut prefixed: Vec<Span> =
+                    vec![Span::styled("    ".to_string(), Style::default())];
+                if is_selected {
+                    for span in md_line.spans {
+                        let mut style = span.style;
+                        if style.fg.is_none()
+                            || style.fg == Some(Color::Rgb(200, 200, 210))
+                        {
+                            style = style.fg(Color::White);
+                        }
+                        prefixed.push(Span::styled(span.content.into_owned(), style));
+                    }
+                } else {
+                    prefixed.extend(md_line.spans.into_iter().map(|s| {
+                        Span::styled(s.content.into_owned(), s.style)
+                    }));
+                }
+                lines.push(Line::from(prefixed));
+            }
+
+            if i + 1 < detail.comments.len() {
+                lines.push(Line::from(Span::styled(
+                    "  ── ── ── ──",
+                    Style::default().fg(Color::Rgb(60, 60, 80)),
+                )));
+            }
+        }
+        *app.detail_comment_offsets.borrow_mut() = comment_offsets;
+    }
+
+    lines.push(Line::from(""));
+
+    // Build link map for mouse click handling
+    {
+        let mut link_map: Vec<Option<String>> = Vec::with_capacity(lines.len());
+        for line in &lines {
+            let mut found_url = None;
+            for span in &line.spans {
+                let text = span.content.as_ref();
+                if text.starts_with("http://") || text.starts_with("https://") {
+                    found_url = Some(text.to_string());
+                    break;
+                }
+            }
+            link_map.push(found_url);
+        }
+        *app.detail_link_map.borrow_mut() = link_map;
+        app.detail_content_y.set(content_area.y);
+        app.detail_content_height.set(content_area.height);
+    }
+
+    let total_lines = lines.len();
+
+    let paragraph = Paragraph::new(lines)
+        .wrap(Wrap { trim: false })
+        .scroll((app.detail_scroll, 0));
+
+    f.render_widget(paragraph, content_area);
+
+    // Scrollbar
+    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+        .begin_symbol(None)
+        .end_symbol(None)
+        .thumb_style(Style::default().fg(ACCENT))
+        .track_style(Style::default().fg(Color::Rgb(40, 40, 60)));
+    let mut scrollbar_state = ScrollbarState::new(total_lines)
+        .position(app.detail_scroll as usize);
+    f.render_stateful_widget(scrollbar, content_area, &mut scrollbar_state);
+
+    app.detail_lines.set(total_lines);
+
+    // Bottom area
+    let mut bottom_lines: Vec<Line> = Vec::new();
+
+    if input_editing {
+        let label = if app.mode == Mode::DetailAddingComment {
+            "New comment"
+        } else {
+            "Edit comment"
+        };
+
+        bottom_lines.push(Line::from(Span::styled(
+            format!(
+                "┌─ {label} {}",
+                "─".repeat(inner_w.saturating_sub(label.len() + 4))
+            ),
+            Style::default().fg(Color::Rgb(100, 100, 140)),
+        )));
+
+        bottom_lines.push(Line::from(Span::styled(
+            format!(
+                "\u{2502} {}",
+                visible_input(
+                    &app.comment_input,
+                    app.cursor_pos,
+                    inner_w.saturating_sub(2),
+                )
+            ),
+            Style::default().fg(Color::White),
+        )));
+
+        bottom_lines.push(Line::from(Span::styled(
+            format!("└{}", "─".repeat(inner_w.saturating_sub(1))),
+            Style::default().fg(Color::Rgb(100, 100, 140)),
+        )));
+
+        bottom_lines.push(Line::from(Span::styled(
+            "Enter:Submit  Esc:Cancel",
+            Style::default().fg(Color::Rgb(100, 100, 120)),
+        )));
+    } else if confirm_deleting {
+        let idx = app.detail_comment_selected.unwrap_or(0);
+        let author = detail
+            .comments
+            .get(idx)
+            .map(|c| c.author.as_str())
+            .unwrap_or("?");
+
+        bottom_lines.push(Line::from(vec![
+            Span::styled(
+                format!("Delete comment #{} by {}? ", idx + 1, author),
+                Style::default()
+                    .fg(Color::Red)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                "y:Yes  n:No",
+                Style::default().fg(Color::Rgb(180, 180, 200)),
+            ),
+        ]));
+        bottom_lines.push(Line::from(Span::styled(
+            "Esc:Cancel",
+            Style::default().fg(Color::Rgb(100, 100, 120)),
+        )));
+    } else {
+        bottom_lines.push(Line::from(Span::styled(
+            "↑↓:Scroll  n/p:Comment  y:Copy  c:Add  e:Edit  x:Del  Enter:Browser  Esc:Close",
+            Style::default().fg(Color::Rgb(100, 100, 120)),
+        )));
+    }
+
+    f.render_widget(Paragraph::new(bottom_lines), bottom_area);
+}
+
+// ── Markdown-like rendering ─────────────────────────────────
+
+fn word_wrap(text: &str, max_width: usize) -> Vec<String> {
+    if max_width == 0 || text.chars().count() <= max_width {
+        return vec![text.to_string()];
+    }
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    let mut current_w = 0;
+
+    for word in text.split(' ') {
+        let word_w = word.chars().count();
+        if current.is_empty() {
+            current = word.to_string();
+            current_w = word_w;
+        } else if current_w + 1 + word_w <= max_width {
+            current.push(' ');
+            current.push_str(word);
+            current_w += 1 + word_w;
+        } else {
+            lines.push(std::mem::take(&mut current));
+            current = word.to_string();
+            current_w = word_w;
+        }
+    }
+    if !current.is_empty() || lines.is_empty() {
+        lines.push(current);
+    }
+    lines
+}
+
+fn emit_prefixed_wrapped(
+    out: &mut Vec<Line<'static>>,
+    prefix_first: Vec<Span<'static>>,
+    prefix_cont: Vec<Span<'static>>,
+    content: &str,
+    width: usize,
+) {
+    let prefix_w: usize = prefix_first
+        .iter()
+        .map(|s| s.content.chars().count())
+        .sum();
+    let avail = width.saturating_sub(prefix_w);
+    let wrapped = word_wrap(content, avail);
+    for (i, sub) in wrapped.iter().enumerate() {
+        let prefix = if i == 0 {
+            prefix_first.clone()
+        } else {
+            prefix_cont.clone()
+        };
+        let mut spans = prefix;
+        spans.extend(parse_inline_markdown(sub));
+        out.push(Line::from(spans));
+    }
+}
+
+fn markdown_to_lines(text: &str, width: usize) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    let mut in_code_block = false;
+
+    for raw_line in text.lines() {
+        // Code fence toggle
+        if raw_line.starts_with("```") {
+            in_code_block = !in_code_block;
+            let label = if in_code_block {
+                let lang = raw_line.strip_prefix("```").unwrap_or("");
+                if lang.is_empty() {
+                    "───".to_string()
+                } else {
+                    format!("─── {lang} ───")
+                }
+            } else {
+                "───".to_string()
+            };
+            lines.push(Line::from(Span::styled(
+                label,
+                Style::default().fg(Color::Rgb(80, 80, 100)),
+            )));
+            continue;
+        }
+
+        if in_code_block {
+            lines.push(Line::from(Span::styled(
+                format!("  {raw_line}"),
+                Style::default().fg(Color::Rgb(130, 190, 130)),
+            )));
+            continue;
+        }
+
+        // Headings
+        if raw_line.starts_with("### ") {
+            for sub in word_wrap(&raw_line[4..], width) {
+                lines.push(Line::from(Span::styled(
+                    sub,
+                    Style::default()
+                        .fg(Color::Rgb(180, 180, 200))
+                        .add_modifier(Modifier::BOLD),
+                )));
+            }
+            continue;
+        }
+        if raw_line.starts_with("## ") {
+            for sub in word_wrap(&raw_line[3..], width) {
+                lines.push(Line::from(Span::styled(
+                    sub,
+                    Style::default()
+                        .fg(ACCENT)
+                        .add_modifier(Modifier::BOLD),
+                )));
+            }
+            continue;
+        }
+        if raw_line.starts_with("# ") {
+            for sub in word_wrap(&raw_line[2..], width) {
+                lines.push(Line::from(Span::styled(
+                    sub,
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+                )));
+            }
+            continue;
+        }
+
+        // Blockquote — may contain nested lists/headings
+        if raw_line.starts_with("> ") {
+            let inner = &raw_line[2..];
+            let bar = || {
+                Span::styled(
+                    "│ ".to_string(),
+                    Style::default().fg(Color::Rgb(80, 130, 180)),
+                )
+            };
+            let bar_cont = || {
+                Span::styled(
+                    "│ ".to_string(),
+                    Style::default().fg(Color::Rgb(80, 130, 180)),
+                )
+            };
+
+            // Nested bullet list inside blockquote
+            if inner.starts_with("  - ") {
+                emit_prefixed_wrapped(
+                    &mut lines,
+                    vec![
+                        bar(),
+                        Span::styled("• ".to_string(), Style::default().fg(ACCENT)),
+                    ],
+                    vec![
+                        bar_cont(),
+                        Span::styled("  ".to_string(), Style::default()),
+                    ],
+                    &inner[4..],
+                    width,
+                );
+            // Nested numbered list inside blockquote
+            } else if let Some((num, item_text)) = try_parse_numbered_item(inner) {
+                let num_prefix = format!("{num}. ");
+                let pad = " ".repeat(num_prefix.len());
+                emit_prefixed_wrapped(
+                    &mut lines,
+                    vec![
+                        bar(),
+                        Span::styled(num_prefix, Style::default().fg(ACCENT)),
+                    ],
+                    vec![
+                        bar_cont(),
+                        Span::styled(pad, Style::default()),
+                    ],
+                    item_text,
+                    width,
+                );
+            // Plain blockquote text
+            } else {
+                emit_prefixed_wrapped(
+                    &mut lines,
+                    vec![bar()],
+                    vec![bar_cont()],
+                    inner,
+                    width,
+                );
+            }
+            continue;
+        }
+
+        // Bullet list
+        if raw_line.starts_with("  - ") {
+            emit_prefixed_wrapped(
+                &mut lines,
+                vec![
+                    Span::styled("  ".to_string(), Style::default()),
+                    Span::styled("• ".to_string(), Style::default().fg(ACCENT)),
+                ],
+                vec![Span::styled("    ".to_string(), Style::default())],
+                &raw_line[4..],
+                width,
+            );
+            continue;
+        }
+
+        // Numbered list
+        if let Some((num, item_text)) = try_parse_numbered_item(raw_line) {
+            let num_prefix = format!("{num}. ");
+            let pad = " ".repeat(2 + num_prefix.len());
+            emit_prefixed_wrapped(
+                &mut lines,
+                vec![
+                    Span::styled("  ".to_string(), Style::default()),
+                    Span::styled(num_prefix, Style::default().fg(ACCENT)),
+                ],
+                vec![Span::styled(pad, Style::default())],
+                item_text,
+                width,
+            );
+            continue;
+        }
+
+        // Horizontal rule
+        if raw_line.starts_with("────") {
+            lines.push(Line::from(Span::styled(
+                raw_line.to_string(),
+                Style::default().fg(Color::Rgb(60, 60, 80)),
+            )));
+            continue;
+        }
+
+        // Regular text with word wrap + inline formatting
+        let wrapped = word_wrap(raw_line, width);
+        for sub in &wrapped {
+            lines.push(Line::from(parse_inline_markdown(sub)));
+        }
+    }
+
+    if lines.is_empty() {
+        lines.push(Line::from(""));
+    }
+
+    lines
+}
+
+fn try_parse_numbered_item(line: &str) -> Option<(&str, &str)> {
+    let trimmed = line.strip_prefix("  ")?;
+    let dot_pos = trimmed.find(". ")?;
+    let num = &trimmed[..dot_pos];
+    if !num.is_empty() && num.len() <= 4 && num.chars().all(|c| c.is_ascii_digit()) {
+        Some((num, &trimmed[dot_pos + 2..]))
+    } else {
+        None
+    }
+}
+
+fn parse_inline_markdown(text: &str) -> Vec<Span<'static>> {
+    let body_style = Style::default().fg(Color::Rgb(200, 200, 210));
+
+    if text.is_empty() {
+        return vec![Span::styled(String::new(), body_style)];
+    }
+
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut remaining = text;
+
+    while !remaining.is_empty() {
+        let url_pos = [remaining.find("https://"), remaining.find("http://")]
+            .into_iter()
+            .flatten()
+            .min();
+
+        let candidates: Vec<(usize, u8)> = [
+            remaining.find("**").map(|p| (p, 0u8)),
+            remaining.find('`').map(|p| (p, 1)),
+            remaining.find('[').map(|p| (p, 2)),
+            url_pos.map(|p| (p, 3)),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+
+        let nearest = candidates.iter().min_by_key(|(p, _)| *p);
+
+        match nearest {
+            None => {
+                spans.push(Span::styled(remaining.to_string(), body_style));
+                break;
+            }
+            Some(&(pos, marker_type)) => {
+                if pos > 0 {
+                    spans.push(Span::styled(remaining[..pos].to_string(), body_style));
+                }
+
+                match marker_type {
+                    0 => {
+                        // **bold**
+                        let after = &remaining[pos + 2..];
+                        if let Some(end) = after.find("**") {
+                            spans.push(Span::styled(
+                                after[..end].to_string(),
+                                Style::default()
+                                    .fg(Color::White)
+                                    .add_modifier(Modifier::BOLD),
+                            ));
+                            remaining = &after[end + 2..];
+                        } else {
+                            spans.push(Span::styled("**".to_string(), body_style));
+                            remaining = after;
+                        }
+                    }
+                    1 => {
+                        // `code`
+                        let after = &remaining[pos + 1..];
+                        if let Some(end) = after.find('`') {
+                            spans.push(Span::styled(
+                                after[..end].to_string(),
+                                Style::default().fg(Color::Rgb(130, 190, 130)),
+                            ));
+                            remaining = &after[end + 1..];
+                        } else {
+                            spans.push(Span::styled("`".to_string(), body_style));
+                            remaining = after;
+                        }
+                    }
+                    2 => {
+                        // [text](url)
+                        let after = &remaining[pos + 1..];
+                        let mut found = false;
+                        if let Some(bracket_end) = after.find("](") {
+                            let link_text = &after[..bracket_end];
+                            let url_part = &after[bracket_end + 2..];
+                            if let Some(paren_end) = url_part.find(')') {
+                                let url = &url_part[..paren_end];
+                                let link_style = Style::default()
+                                    .fg(Color::Rgb(100, 180, 255))
+                                    .add_modifier(Modifier::UNDERLINED);
+                                if link_text == url || link_text.is_empty() {
+                                    spans.push(Span::styled(url.to_string(), link_style));
+                                } else {
+                                    spans.push(Span::styled(
+                                        link_text.to_string(),
+                                        link_style,
+                                    ));
+                                }
+                                remaining = &url_part[paren_end + 1..];
+                                found = true;
+                            }
+                        }
+                        if !found {
+                            spans.push(Span::styled("[".to_string(), body_style));
+                            remaining = after;
+                        }
+                    }
+                    3 => {
+                        // Bare URL (https:// or http://)
+                        let url_text = &remaining[pos..];
+                        let end = url_text
+                            .find(|c: char| c.is_whitespace())
+                            .unwrap_or(url_text.len());
+                        let raw_url = &url_text[..end];
+                        let url = raw_url.trim_end_matches(|c: char| {
+                            matches!(c, '.' | ',' | ')' | ';' | ':' | '!' | '?')
+                        });
+                        let link_style = Style::default()
+                            .fg(Color::Rgb(100, 180, 255))
+                            .add_modifier(Modifier::UNDERLINED);
+                        spans.push(Span::styled(url.to_string(), link_style));
+                        remaining = &remaining[pos + url.len()..];
+                    }
+                    _ => unreachable!(),
+                }
+            }
+        }
+    }
+
+    if spans.is_empty() {
+        spans.push(Span::styled(String::new(), body_style));
+    }
+
+    spans
+}
+
+// ── Status bar ──────────────────────────────────────────────
+
+fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
+    let tree_label = if app.show_all_parents {
+        "p:Tree[ON]"
+    } else {
+        "p:Tree[OFF]"
+    };
+
+    let (mode_text, help_text) = match app.mode {
+        Mode::Normal => (
+            Span::styled(
+                " NORMAL ",
+                Style::default()
+                    .bg(Color::Rgb(60, 60, 120))
+                    .fg(Color::White),
+            ),
+            format!(
+                " q:Quit  j/k:Nav  d:Detail  Enter:Open  n:Note  f:Filter  {tree_label}  r:Refresh  ?:Legend "
+            ),
+        ),
+        Mode::EditingNote => (
+            Span::styled(
+                " EDIT NOTE ",
+                Style::default()
+                    .bg(Color::Green)
+                    .fg(Color::Black)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            " Enter:Save  Esc:Cancel ".to_string(),
+        ),
+        Mode::FilterEditor | Mode::FilterAdding => (
+            Span::styled(
+                " FILTER ",
+                Style::default()
+                    .bg(Color::Rgb(180, 130, 50))
+                    .fg(Color::Black)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            " Editing status filters... ".to_string(),
+        ),
+        Mode::TicketDetail => (
+            Span::styled(
+                " DETAIL ",
+                Style::default()
+                    .bg(Color::Rgb(80, 120, 180))
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            " ↑↓:Scroll  n/N:Select comment  c:Add  e:Edit  x:Del comment  Enter:Browser  Esc:Close "
+                .to_string(),
+        ),
+        Mode::DetailAddingComment => (
+            Span::styled(
+                " ADD COMMENT ",
+                Style::default()
+                    .bg(Color::Green)
+                    .fg(Color::Black)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            " Enter:Submit  Esc:Cancel ".to_string(),
+        ),
+        Mode::DetailEditingComment => (
+            Span::styled(
+                " EDIT COMMENT ",
+                Style::default()
+                    .bg(Color::Rgb(180, 130, 50))
+                    .fg(Color::Black)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            " Enter:Submit  Esc:Cancel ".to_string(),
+        ),
+        Mode::DetailConfirmDelete => (
+            Span::styled(
+                " DELETE COMMENT ",
+                Style::default()
+                    .bg(Color::Red)
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            " y:Confirm  n/Esc:Cancel ".to_string(),
+        ),
+    };
+
+    let status = if app.status_msg.is_empty() {
+        String::new()
+    } else {
+        format!(" │ {}", app.status_msg)
+    };
+
+    let line = Line::from(vec![
+        mode_text,
+        Span::styled(help_text, Style::default().fg(Color::Rgb(120, 120, 140))),
+        Span::styled(status, Style::default().fg(Color::DarkGray)),
+    ]);
+
+    f.render_widget(Paragraph::new(line), area);
+}

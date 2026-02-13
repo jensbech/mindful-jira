@@ -1,0 +1,13 @@
+{
+  "jira_url": "https://yourorg.atlassian.net",
+  "email": "you@example.com",
+  "api_token": "your-api-token",
+  "status_filters": [
+    { "name": "Backlog", "excluded": true },
+    { "name": "Done", "excluded": true },
+    { "name": "Closed", "excluded": true },
+    { "name": "Resolved", "excluded": true },
+    { "name": "Rejected", "excluded": true },
+    { "name": "Approved Requirement", "excluded": true }
+  ]
+}

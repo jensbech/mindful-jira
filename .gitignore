@@ -1,0 +1,10 @@
+/target
+/release
+jira-config.json
+notes.json
+
+# Added by cargo
+#
+# already existing elements were commented out
+
+#/target

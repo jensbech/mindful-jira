@@ -2,6 +2,12 @@
 
 A terminal UI for viewing and managing your Jira issues, built with Rust and [ratatui](https://github.com/ratatui/ratatui).
 
+![Issue list with notes, highlights, and parent/child grouping](screenshots/issue-list.png)
+
+![Ticket detail with description, code blocks, and blockquotes](screenshots/ticket-detail.png)
+
+![Comments section with inline markdown and comment input](screenshots/comments.png)
+
 ## Install
 
 ```bash

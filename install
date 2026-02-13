@@ -7,6 +7,32 @@ INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
 
 echo "Installing mindful-jira..."
 
+# Detect OS
+case "$(uname -s)" in
+    Darwin)  OS="apple-darwin" ;;
+    Linux)   OS="unknown-linux-musl" ;;
+    MINGW*|MSYS*|CYGWIN*)
+        OS="pc-windows-gnu"
+        ;;
+    *)
+        echo "Unsupported OS: $(uname -s)"
+        exit 1
+        ;;
+esac
+
+# Detect architecture
+case "$(uname -m)" in
+    x86_64|amd64)  ARCH="x86_64" ;;
+    aarch64|arm64)  ARCH="aarch64" ;;
+    *)
+        echo "Unsupported architecture: $(uname -m)"
+        exit 1
+        ;;
+esac
+
+TARGET="${ARCH}-${OS}"
+echo "Detected platform: $TARGET"
+
 # Create install directory
 mkdir -p "$INSTALL_DIR"
 
@@ -24,11 +50,11 @@ fi
 
 echo "Found version: $VERSION"
 
-# Find the aarch64 binary download URL
-DOWNLOAD_URL=$(echo "$RELEASE_JSON" | grep -o '"browser_download_url":"[^"]*aarch64[^"]*' | cut -d'"' -f4 | head -1)
+# Find the binary download URL for this platform
+DOWNLOAD_URL=$(echo "$RELEASE_JSON" | grep -o "\"browser_download_url\":\"[^\"]*${TARGET}[^\"]*" | cut -d'"' -f4 | head -1)
 
 if [ -z "$DOWNLOAD_URL" ]; then
-    echo "Could not find aarch64 binary for this release"
+    echo "Could not find binary for $TARGET"
     echo "Available downloads:"
     echo "$RELEASE_JSON" | grep -o '"browser_download_url":"[^"]*' | cut -d'"' -f4 || true
     exit 1
@@ -36,13 +62,19 @@ fi
 
 echo "Downloading from: $DOWNLOAD_URL"
 
+# Determine binary name
+BINARY_NAME="mindful-jira"
+if [ "$OS" = "pc-windows-gnu" ]; then
+    BINARY_NAME="mindful-jira.exe"
+fi
+
 # Download and install
 TEMP_FILE=$(mktemp)
 curl -fsSL -o "$TEMP_FILE" "$DOWNLOAD_URL"
-mv "$TEMP_FILE" "$INSTALL_DIR/mindful-jira"
-chmod +x "$INSTALL_DIR/mindful-jira"
+mv "$TEMP_FILE" "$INSTALL_DIR/$BINARY_NAME"
+chmod +x "$INSTALL_DIR/$BINARY_NAME"
 
-echo "Installed to: $INSTALL_DIR/mindful-jira"
+echo "Installed to: $INSTALL_DIR/$BINARY_NAME"
 
 # Check if in PATH
 if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then

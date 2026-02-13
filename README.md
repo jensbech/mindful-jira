@@ -8,7 +8,21 @@ A terminal UI for viewing and managing your Jira issues, built with Rust and [ra
 
 ![Comments section with inline markdown and comment input](screenshots/comments.png)
 
+## Supported platforms
+
+| OS | Arch | Binary |
+|----|------|--------|
+| macOS | ARM64 (Apple Silicon) | `aarch64-apple-darwin` |
+| macOS | x86_64 (Intel) | `x86_64-apple-darwin` |
+| Linux | x86_64 | `x86_64-unknown-linux-musl` |
+| Linux | ARM64 | `aarch64-unknown-linux-musl` |
+| Windows | x86_64 | `x86_64-pc-windows-gnu` |
+
+Linux binaries are statically linked (musl) and run on any distro.
+
 ## Install
+
+The install script auto-detects your OS and architecture:
 
 ```bash
 curl -fsSL https://git.bechsor.no/jens/mindful-jira/raw/branch/main/install | bash

@@ -2,10 +2,25 @@
 
 A terminal UI for viewing and managing your Jira issues, built with Rust and [ratatui](https://github.com/ratatui/ratatui).
 
+## Install
+
+```bash
+curl -fsSL https://git.bechsor.no/jens/mindful-jira/raw/branch/main/install | bash
+```
+
 ## Setup
 
 1. Copy `jira-config.json.example` to `jira-config.json` and fill in your Jira URL, email, and API token.
-2. `cargo run`
+2. `mindful-jira`
+
+## Development
+
+```bash
+cargo build                # debug build
+just build                 # release build (current arch)
+just release               # release binary for distribution
+just lint                  # format + clippy
+```
 
 ## Keybindings
 

@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <!-- Hypnotic spiral -->
+  <path d="
+    M100 100
+    C100 94, 106 88, 112 88
+    C124 88, 130 100, 130 112
+    C130 130, 112 142, 94 142
+    C70 142, 58 118, 58 94
+    C58 62, 82 42, 112 42
+    C150 42, 172 70, 172 106
+    C172 150, 142 184, 100 184
+    C50 184, 16 146, 16 100
+    C16 46, 54 10, 106 10"
+    fill="none"
+    stroke="#4A90D9"
+    stroke-width="6"
+    stroke-linecap="round"
+  />
+</svg>

@@ -91,6 +91,8 @@ pub struct App {
     // Mention state
     pub mention: Option<MentionState>,
     pub resolved_mentions: Vec<ResolvedMention>,
+    // Dummy mode (no Jira connection)
+    pub dummy: bool,
 }
 
 impl App {
@@ -135,6 +137,7 @@ impl App {
             show_legend: false,
             mention: None,
             resolved_mentions: Vec::new(),
+            dummy: false,
         }
     }
 
@@ -144,6 +147,10 @@ impl App {
     }
 
     pub async fn init(&mut self) {
+        if self.dummy {
+            self.current_account_id = "dummy-user-001".to_string();
+            return;
+        }
         match jira::fetch_current_account_id(&self.config).await {
             Ok(id) => self.current_account_id = id,
             Err(e) => self.set_status(format!("Warning: {e}")),
@@ -151,6 +158,13 @@ impl App {
     }
 
     pub async fn refresh(&mut self) {
+        if self.dummy {
+            self.all_rows = dummy_issues();
+            let count = self.all_rows.len();
+            self.set_status(format!("Loaded {count} issues"));
+            self.apply_search_filter();
+            return;
+        }
         self.set_status("Fetching issues...");
         match jira::fetch_issues(&self.config, self.show_all_parents).await {
             Ok(issues) => {
@@ -356,6 +370,13 @@ impl App {
             Some(row) => row.issue.key.clone(),
             None => return,
         };
+        if self.dummy {
+            self.detail = Some(dummy_detail(&key));
+            self.detail_scroll = 0;
+            self.mode = Mode::TicketDetail;
+            self.status_msg.clear();
+            return;
+        }
         self.set_status(format!("Loading {key}..."));
         match jira::fetch_issue_detail(&self.config, &key).await {
             Ok(detail) => {
@@ -544,6 +565,27 @@ impl App {
             Some(d) => d.key.clone(),
             None => return,
         };
+        if self.dummy {
+            // Add comment locally to the detail
+            if let Some(ref mut detail) = self.detail {
+                detail.comments.insert(
+                    0,
+                    jira::Comment {
+                        id: format!("dummy-{}", detail.comments.len() + 1),
+                        author: "You (Demo User)".into(),
+                        author_account_id: "dummy-user-001".into(),
+                        created: "2026-02-16".into(),
+                        body: text,
+                    },
+                );
+            }
+            self.set_status("Comment added (dummy)");
+            self.comment_input.clear();
+            self.mention = None;
+            self.resolved_mentions.clear();
+            self.mode = Mode::TicketDetail;
+            return;
+        }
         let mentions = self.build_mention_inserts();
         self.set_status("Adding comment...");
         match jira::add_comment(&self.config, &key, &text, &mentions).await {
@@ -566,6 +608,20 @@ impl App {
         let text = self.comment_input.trim().to_string();
         if text.is_empty() {
             self.cancel_comment_action();
+            return;
+        }
+        if self.dummy {
+            if let (Some(ref mut detail), Some(ref cid)) = (&mut self.detail, &self.editing_comment_id) {
+                if let Some(c) = detail.comments.iter_mut().find(|c| c.id == *cid) {
+                    c.body = text;
+                }
+            }
+            self.set_status("Comment updated (dummy)");
+            self.comment_input.clear();
+            self.editing_comment_id = None;
+            self.mention = None;
+            self.resolved_mentions.clear();
+            self.mode = Mode::TicketDetail;
             return;
         }
         let key = match &self.detail {
@@ -600,6 +656,17 @@ impl App {
             Some(i) => i,
             None => return,
         };
+        if self.dummy {
+            if let Some(ref mut detail) = self.detail {
+                if idx < detail.comments.len() {
+                    detail.comments.remove(idx);
+                }
+            }
+            self.set_status("Comment deleted (dummy)");
+            self.detail_comment_selected = None;
+            self.mode = Mode::TicketDetail;
+            return;
+        }
         let detail = match &self.detail {
             Some(d) => d,
             None => return,
@@ -626,6 +693,9 @@ impl App {
     }
 
     async fn refresh_detail(&mut self, key: &str) {
+        if self.dummy {
+            return; // detail already updated in-place
+        }
         match jira::fetch_issue_detail(&self.config, key).await {
             Ok(detail) => {
                 self.detail = Some(detail);
@@ -751,6 +821,28 @@ impl App {
             }
             return;
         }
+        if self.dummy {
+            let all_users = vec![
+                JiraUser { account_id: "u-001".into(), display_name: "Jane Smith".into() },
+                JiraUser { account_id: "u-002".into(), display_name: "John Doe".into() },
+                JiraUser { account_id: "u-003".into(), display_name: "Alice Chen".into() },
+                JiraUser { account_id: "u-004".into(), display_name: "Bob Martinez".into() },
+                JiraUser { account_id: "u-005".into(), display_name: "Sarah Johnson".into() },
+                JiraUser { account_id: "u-006".into(), display_name: "James Wilson".into() },
+                JiraUser { account_id: "u-007".into(), display_name: "Emily Davis".into() },
+                JiraUser { account_id: "u-008".into(), display_name: "Michael Brown".into() },
+            ];
+            let q = query.to_lowercase();
+            let filtered: Vec<JiraUser> = all_users
+                .into_iter()
+                .filter(|u| u.display_name.to_lowercase().contains(&q))
+                .collect();
+            if let Some(ref mut mention) = self.mention {
+                mention.candidates = filtered;
+                mention.selected = 0;
+            }
+            return;
+        }
         match jira::search_users(&self.config, &query).await {
             Ok(users) => {
                 if let Some(ref mut mention) = self.mention {
@@ -793,6 +885,18 @@ impl App {
     // --- Transitions ---
 
     pub async fn open_transition_picker(&mut self) {
+        if self.dummy {
+            let current = self.detail.as_ref().map(|d| d.status.as_str()).unwrap_or("");
+            self.transitions = vec![
+                Transition { id: "t1".into(), name: "Start Progress".into(), to_status: "In Progress".into() },
+                Transition { id: "t2".into(), name: "Move to Review".into(), to_status: "In Review".into() },
+                Transition { id: "t3".into(), name: "Done".into(), to_status: "Done".into() },
+                Transition { id: "t4".into(), name: "Reopen".into(), to_status: current.to_string() },
+            ];
+            self.transition_selected = 0;
+            self.mode = Mode::DetailTransition;
+            return;
+        }
         let key = match &self.detail {
             Some(d) => d.key.clone(),
             None => return,
@@ -849,11 +953,21 @@ impl App {
             Some(t) => t,
             None => return,
         };
+        let name = transition.name.clone();
+        let to_status = transition.to_status.clone();
+        if self.dummy {
+            if let Some(ref mut detail) = self.detail {
+                detail.status = to_status;
+            }
+            self.transitions.clear();
+            self.mode = Mode::TicketDetail;
+            self.set_status(format!("Transitioned to {name} (dummy)"));
+            return;
+        }
         let key = match &self.detail {
             Some(d) => d.key.clone(),
             None => return,
         };
-        let name = transition.name.clone();
         let id = transition.id.clone();
         self.set_status(format!("Transitioning to {name}..."));
         match jira::do_transition(&self.config, &key, &id).await {
@@ -933,12 +1047,16 @@ impl App {
     }
 
     pub fn close_filter_editor(&mut self) {
-        self.config.save();
+        if !self.dummy {
+            self.config.save();
+        }
         self.mode = Mode::Normal;
     }
 
     pub async fn apply_filters_and_refresh(&mut self) {
-        self.config.save();
+        if !self.dummy {
+            self.config.save();
+        }
         self.mode = Mode::Normal;
         self.refresh().await;
     }
@@ -1015,4 +1133,120 @@ fn copy_to_clipboard(text: &str) -> Result<(), String> {
 
     child.wait().map_err(|e| format!("{e}"))?;
     Ok(())
+}
+
+// --- Dummy data generators ---
+
+fn dummy_issues() -> Vec<DisplayRow> {
+    let data: Vec<(
+        &str,  // key
+        &str,  // summary
+        &str,  // issue_type
+        &str,  // priority
+        &str,  // status
+        &str,  // resolution
+        &str,  // reporter
+        &str,  // assignee
+        &str,  // created
+        Option<&str>, // parent_key
+    )> = vec![
+        ("PROJ-101", "User authentication flow redesign", "Epic", "High", "In Progress", "Unresolved", "Sarah Johnson", "You", "2026-01-15", None),
+        ("PROJ-102", "Implement OAuth2 login with Google", "Story", "High", "In Progress", "Unresolved", "Sarah Johnson", "You", "2026-01-20", Some("PROJ-101")),
+        ("PROJ-103", "Add refresh token rotation", "Sub-task", "Major", "To Do", "Unresolved", "Jane Smith", "You", "2026-01-22", Some("PROJ-101")),
+        ("PROJ-110", "Dashboard performance optimization", "Story", "Critical", "In Progress", "Unresolved", "Alice Chen", "You", "2026-01-10", None),
+        ("PROJ-111", "Fix N+1 query in project list endpoint", "Bug", "Blocker", "In Review", "Unresolved", "Bob Martinez", "You", "2026-02-01", Some("PROJ-110")),
+        ("PROJ-120", "Notification system overhaul", "Epic", "Medium", "To Do", "Unresolved", "James Wilson", "You", "2026-02-05", None),
+        ("PROJ-121", "Email digest preferences UI", "Task", "Medium", "Selected for Development", "Unresolved", "Emily Davis", "You", "2026-02-06", Some("PROJ-120")),
+        ("PROJ-122", "Slack integration webhook handler", "Task", "Medium", "To Do", "Unresolved", "Michael Brown", "You", "2026-02-07", Some("PROJ-120")),
+        ("PROJ-130", "Search results showing stale data after index rebuild", "Bug", "High", "In Progress", "Unresolved", "John Doe", "You", "2026-02-10", None),
+        ("PROJ-140", "Add dark mode support to settings page", "Improvement", "Low", "Backlog", "Unresolved", "Alice Chen", "You", "2026-02-12", None),
+        ("PROJ-150", "Evaluate migration to PostgreSQL 17", "Spike", "Minor", "To Do", "Unresolved", "Bob Martinez", "You", "2026-02-14", None),
+        ("PROJ-160", "Bulk export feature for admin dashboard", "New Feature", "Normal", "In Progress", "Unresolved", "Sarah Johnson", "You", "2026-01-28", None),
+        ("PROJ-161", "CSV export handler", "Sub-task", "Normal", "Done", "Fixed", "Jane Smith", "You", "2026-01-30", Some("PROJ-160")),
+        ("PROJ-162", "PDF export with charts", "Sub-task", "Normal", "In Progress", "Unresolved", "Jane Smith", "You", "2026-02-02", Some("PROJ-160")),
+    ];
+
+    data.into_iter()
+        .map(|(key, summary, issue_type, priority, status, resolution, reporter, assignee, created, parent_key)| {
+            let is_subtask = parent_key.is_some();
+            DisplayRow {
+                issue: jira::JiraIssue {
+                    key: key.to_string(),
+                    summary: summary.to_string(),
+                    assignee: assignee.to_string(),
+                    reporter: reporter.to_string(),
+                    priority: priority.to_string(),
+                    status: status.to_string(),
+                    resolution: resolution.to_string(),
+                    created: created.to_string(),
+                    issue_type: issue_type.to_string(),
+                    parent_key: parent_key.map(|s| s.to_string()),
+                    is_subtask,
+                    is_context_parent: false,
+                },
+                depth: if is_subtask { 1 } else { 0 },
+                is_context_parent: false,
+            }
+        })
+        .collect()
+}
+
+fn dummy_detail(key: &str) -> IssueDetail {
+    // Find matching issue info for the summary
+    let (summary, issue_type, status) = match key {
+        "PROJ-101" => ("User authentication flow redesign", "Epic", "In Progress"),
+        "PROJ-102" => ("Implement OAuth2 login with Google", "Story", "In Progress"),
+        "PROJ-103" => ("Add refresh token rotation", "Sub-task", "To Do"),
+        "PROJ-110" => ("Dashboard performance optimization", "Story", "In Progress"),
+        "PROJ-111" => ("Fix N+1 query in project list endpoint", "Bug", "In Review"),
+        "PROJ-120" => ("Notification system overhaul", "Epic", "To Do"),
+        "PROJ-121" => ("Email digest preferences UI", "Task", "Selected for Development"),
+        "PROJ-122" => ("Slack integration webhook handler", "Task", "To Do"),
+        "PROJ-130" => ("Search results showing stale data after index rebuild", "Bug", "In Progress"),
+        "PROJ-140" => ("Add dark mode support to settings page", "Improvement", "Backlog"),
+        "PROJ-150" => ("Evaluate migration to PostgreSQL 17", "Spike", "To Do"),
+        "PROJ-160" => ("Bulk export feature for admin dashboard", "New Feature", "In Progress"),
+        "PROJ-161" => ("CSV export handler", "Sub-task", "Done"),
+        "PROJ-162" => ("PDF export with charts", "Sub-task", "In Progress"),
+        _ => ("Unknown issue", "Task", "To Do"),
+    };
+
+    let description = match key {
+        "PROJ-110" => "## Overview\n\nThe main dashboard is taking **3-4 seconds** to load for users with more than 50 projects. We need to optimize the backend queries and add caching.\n\n## Acceptance Criteria\n\n  1. Dashboard loads in under 500ms for 100+ projects\n  2. Add Redis caching layer for project metadata\n  3. No visible change to the user experience\n\n## Technical Notes\n\nThe main bottleneck is in the `ProjectService.listWithStats()` method which fires N+1 queries for each project's issue count. Consider using a single aggregation query.\n\nhttps://wiki.internal.example.com/perf-guidelines".to_string(),
+        "PROJ-130" => "## Bug Report\n\nAfter the nightly Elasticsearch index rebuild, search results are showing stale data for approximately **10 minutes**.\n\n## Steps to Reproduce\n\n  1. Trigger a full index rebuild via admin panel\n  2. Search for a recently updated ticket\n  3. Observe that old field values are shown\n\n## Expected Behavior\n\nSearch results should reflect the latest data immediately after rebuild completes.\n\n## Environment\n\n  - Elasticsearch 8.12\n  - Java 21\n  - `search-service` v2.4.1".to_string(),
+        _ => format!("## Description\n\nThis ticket covers the implementation of: **{summary}**.\n\nPlease see the linked design doc for full requirements and mockups.\n\n## Acceptance Criteria\n\n  1. Feature works as described in the design doc\n  2. Unit tests cover all edge cases\n  3. Documentation updated\n\n## Notes\n\nReach out to @Alice Chen or @Bob Martinez if you have questions about the architecture."),
+    };
+
+    let comments = vec![
+        jira::Comment {
+            id: "c-001".to_string(),
+            author: "Alice Chen".to_string(),
+            author_account_id: "u-003".to_string(),
+            created: "2026-02-14".to_string(),
+            body: "I've started looking into this. The main blocker is the dependency on the auth service refactor. @Jane Smith can you confirm the timeline for that?".to_string(),
+        },
+        jira::Comment {
+            id: "c-002".to_string(),
+            author: "Jane Smith".to_string(),
+            author_account_id: "u-001".to_string(),
+            created: "2026-02-13".to_string(),
+            body: "Auth service refactor should be done by end of this sprint. I'll ping you when the PR is merged.".to_string(),
+        },
+        jira::Comment {
+            id: "c-003".to_string(),
+            author: "You (Demo User)".to_string(),
+            author_account_id: "dummy-user-001".to_string(),
+            created: "2026-02-12".to_string(),
+            body: "Sounds good, I'll start on the frontend pieces in the meantime. Let me know if you need help with the auth service PR.".to_string(),
+        },
+    ];
+
+    IssueDetail {
+        key: key.to_string(),
+        issue_type: issue_type.to_string(),
+        status: status.to_string(),
+        summary: summary.to_string(),
+        description,
+        comments,
+    }
 }

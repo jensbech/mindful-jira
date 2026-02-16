@@ -125,11 +125,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         _ => {}
     }
 
-    let config = match Config::load() {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("{e}");
-            std::process::exit(1);
+    let is_dummy = args.get(1).map(|s| s.as_str()) == Some("dummy");
+
+    let config = if is_dummy {
+        Config {
+            jira_url: "https://demo.atlassian.net".to_string(),
+            email: "demo@example.com".to_string(),
+            api_token: "dummy".to_string(),
+            status_filters: config::default_status_filters(),
+        }
+    } else {
+        match Config::load() {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
         }
     };
 
@@ -141,6 +152,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut terminal = Terminal::new(backend)?;
 
     let mut app = App::new(config);
+    app.dummy = is_dummy;
     app.init().await;
     app.refresh().await;
     app.status_msg.clear();

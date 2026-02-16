@@ -9,9 +9,8 @@ curl -fsSL https://raw.githubusercontent.com/jensbech/mindful-jira/main/install 
 ```
 
 
-![Issue list](screenshots/issue-list.png)
-![Ticket detail](screenshots/ticket-detail.png)
-![Comments](screenshots/comments.png)
+![Screenshot](screenshots/1.png)
+![Screenshot](screenshots/2.png)
 
 Binaries available for macOS (ARM64/x86_64), Linux (x86_64/ARM64), and Windows (x86_64).
 

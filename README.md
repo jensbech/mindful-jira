@@ -4,14 +4,13 @@
 
 <h1 align="center">Mindful Jira</h1>
 
-<p align="center">A terminal UI for viewing and managing your Jira issues, built with Rust and <a href="https://github.com/ratatui/ratatui">ratatui</a>.</p>
+<p align="center">A terminal UI for viewing and managing your Jira issues.
 
 ## Install
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/jensbech/mindful-jira/main/install | bash
 ```
-
 
 ![Screenshot](screenshots/1.png)
 ![Screenshot](screenshots/2.png)

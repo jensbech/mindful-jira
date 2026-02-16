@@ -1,22 +1,33 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
-  <!-- Ensō (zen circle) - represents mindfulness -->
-  <path d="M100 20
-    C 145 20, 180 55, 180 100
-    C 180 145, 145 180, 100 180
-    C 55 180, 20 145, 20 100
-    C 20 60, 48 28, 85 22"
+  <!-- Ensō (zen circle) - incomplete brush stroke -->
+  <path d="M100 18
+    C 148 18, 182 52, 182 100
+    C 182 148, 148 182, 100 182
+    C 52 182, 18 148, 18 100
+    C 18 58, 44 26, 82 20"
     fill="none"
     stroke="#4A90D9"
-    stroke-width="8"
+    stroke-width="7"
     stroke-linecap="round"
   />
-  <!-- Checkmark - represents resolved tasks / signal over noise -->
-  <polyline
-    points="70,105 90,125 130,80"
-    fill="none"
-    stroke="#4A90D9"
-    stroke-width="8"
-    stroke-linecap="round"
-    stroke-linejoin="round"
+  <!-- Head -->
+  <circle cx="100" cy="72" r="14" fill="#4A90D9" />
+  <!-- Body - meditating torso -->
+  <path d="M100 86 C100 86, 100 115, 100 120"
+    stroke="#4A90D9" stroke-width="7" stroke-linecap="round" fill="none"
   />
+  <!-- Crossed legs (lotus position) -->
+  <path d="M72 145 C80 130, 90 125, 100 128 C110 125, 120 130, 128 145"
+    stroke="#4A90D9" stroke-width="7" stroke-linecap="round" fill="none"
+  />
+  <!-- Arms resting on knees, palms up -->
+  <path d="M72 138 C78 128, 86 120, 92 118"
+    stroke="#4A90D9" stroke-width="6" stroke-linecap="round" fill="none"
+  />
+  <path d="M128 138 C122 128, 114 120, 108 118"
+    stroke="#4A90D9" stroke-width="6" stroke-linecap="round" fill="none"
+  />
+  <!-- Small dots above hands (zen/energy) -->
+  <circle cx="70" cy="132" r="3" fill="#4A90D9" opacity="0.5" />
+  <circle cx="130" cy="132" r="3" fill="#4A90D9" opacity="0.5" />
 </svg>

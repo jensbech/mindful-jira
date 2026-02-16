@@ -99,6 +99,11 @@ _publish:
             --notes "Release ${VERSION}" \
             --latest
     fi
+    # gh creates releases as drafts while uploading assets — publish it
+    echo "Waiting for release to finalize..."
+    sleep 5
+    gh release edit "$TAG" --repo jensbech/mindful-jira --draft=false
+    echo "Published ${TAG}"
     echo "Done: https://github.com/jensbech/mindful-jira/releases/tag/${TAG}"
 
 # Build debug version (faster for development)

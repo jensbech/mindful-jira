@@ -1,5 +1,6 @@
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
+use std::time::Instant;
 
 use crate::config::{Config, StatusFilter};
 use crate::jira::{self, IssueDetail, Transition};
@@ -44,6 +45,7 @@ pub struct App {
     pub muted_keys: std::collections::HashSet<String>,
     pub config: Config,
     pub status_msg: String,
+    pub status_set_at: Instant,
     pub show_all_parents: bool,
     // Filter editor state
     pub filter_selected: usize,
@@ -94,6 +96,7 @@ impl App {
             muted_keys,
             config,
             status_msg: String::new(),
+            status_set_at: Instant::now(),
             show_all_parents: false,
             filter_selected: 0,
             filter_input: String::new(),
@@ -115,15 +118,20 @@ impl App {
         }
     }
 
+    pub fn set_status(&mut self, msg: impl Into<String>) {
+        self.status_msg = msg.into();
+        self.status_set_at = Instant::now();
+    }
+
     pub async fn init(&mut self) {
         match jira::fetch_current_account_id(&self.config).await {
             Ok(id) => self.current_account_id = id,
-            Err(e) => self.status_msg = format!("Warning: {e}"),
+            Err(e) => self.set_status(format!("Warning: {e}")),
         }
     }
 
     pub async fn refresh(&mut self) {
-        self.status_msg = "Fetching issues...".to_string();
+        self.set_status("Fetching issues...");
         match jira::fetch_issues(&self.config, self.show_all_parents).await {
             Ok(issues) => {
                 self.all_rows = issues
@@ -143,11 +151,11 @@ impl App {
                     })
                     .collect();
                 let count = self.all_rows.len();
-                self.status_msg = format!("Loaded {count} issues");
+                self.set_status(format!("Loaded {count} issues"));
                 self.apply_search_filter();
             }
             Err(e) => {
-                self.status_msg = format!("Error: {e}");
+                self.set_status(format!("Error: {e}"));
             }
         }
     }
@@ -249,6 +257,15 @@ impl App {
         self.mode = Mode::Normal;
     }
 
+    pub fn copy_key_to_clipboard(&mut self) {
+        if let Some(row) = self.rows.get(self.selected) {
+            match copy_to_clipboard(&row.issue.key) {
+                Ok(()) => self.set_status(format!("Copied {}", row.issue.key)),
+                Err(e) => self.set_status(format!("Copy failed: {e}")),
+            }
+        }
+    }
+
     pub fn toggle_highlight(&mut self) {
         if let Some(row) = self.rows.get(self.selected) {
             let key = row.issue.key.clone();
@@ -319,7 +336,7 @@ impl App {
             Some(row) => row.issue.key.clone(),
             None => return,
         };
-        self.status_msg = format!("Loading {key}...");
+        self.set_status(format!("Loading {key}..."));
         match jira::fetch_issue_detail(&self.config, &key).await {
             Ok(detail) => {
                 self.detail = Some(detail);
@@ -328,7 +345,7 @@ impl App {
                 self.status_msg.clear();
             }
             Err(e) => {
-                self.status_msg = format!("Error: {e}");
+                self.set_status(format!("Error: {e}"));
             }
         }
     }
@@ -435,8 +452,8 @@ impl App {
             }
         }
         match copy_to_clipboard(&text) {
-            Ok(()) => self.status_msg = "Ticket copied to clipboard".to_string(),
-            Err(e) => self.status_msg = format!("Copy failed: {e}"),
+            Ok(()) => self.set_status("Ticket copied to clipboard"),
+            Err(e) => self.set_status(format!("Copy failed: {e}")),
         }
     }
 
@@ -460,7 +477,7 @@ impl App {
             None => return,
         };
         if comment.author_account_id != self.current_account_id {
-            self.status_msg = "Can only edit your own comments".to_string();
+            self.set_status("Can only edit your own comments");
             return;
         }
         self.comment_input = comment.body.clone();
@@ -477,7 +494,7 @@ impl App {
         if let Some(detail) = &self.detail {
             if let Some(comment) = detail.comments.get(idx) {
                 if comment.author_account_id != self.current_account_id {
-                    self.status_msg = "Can only delete your own comments".to_string();
+                    self.set_status("Can only delete your own comments");
                     return;
                 }
             }
@@ -501,16 +518,16 @@ impl App {
             Some(d) => d.key.clone(),
             None => return,
         };
-        self.status_msg = "Adding comment...".to_string();
+        self.set_status("Adding comment...");
         match jira::add_comment(&self.config, &key, &text).await {
             Ok(()) => {
-                self.status_msg = "Comment added".to_string();
+                self.set_status("Comment added");
                 self.comment_input.clear();
                 self.mode = Mode::TicketDetail;
                 self.refresh_detail(&key).await;
             }
             Err(e) => {
-                self.status_msg = format!("Error: {e}");
+                self.set_status(format!("Error: {e}"));
                 self.mode = Mode::TicketDetail;
             }
         }
@@ -530,17 +547,17 @@ impl App {
             Some(id) => id.clone(),
             None => return,
         };
-        self.status_msg = "Updating comment...".to_string();
+        self.set_status("Updating comment...");
         match jira::update_comment(&self.config, &key, &comment_id, &text).await {
             Ok(()) => {
-                self.status_msg = "Comment updated".to_string();
+                self.set_status("Comment updated");
                 self.comment_input.clear();
                 self.editing_comment_id = None;
                 self.mode = Mode::TicketDetail;
                 self.refresh_detail(&key).await;
             }
             Err(e) => {
-                self.status_msg = format!("Error: {e}");
+                self.set_status(format!("Error: {e}"));
                 self.mode = Mode::TicketDetail;
             }
         }
@@ -561,16 +578,16 @@ impl App {
         };
         let key = detail.key.clone();
         let comment_id = comment.id.clone();
-        self.status_msg = "Deleting comment...".to_string();
+        self.set_status("Deleting comment...");
         match jira::delete_comment(&self.config, &key, &comment_id).await {
             Ok(()) => {
-                self.status_msg = "Comment deleted".to_string();
+                self.set_status("Comment deleted");
                 self.detail_comment_selected = None;
                 self.mode = Mode::TicketDetail;
                 self.refresh_detail(&key).await;
             }
             Err(e) => {
-                self.status_msg = format!("Error: {e}");
+                self.set_status(format!("Error: {e}"));
                 self.mode = Mode::TicketDetail;
             }
         }
@@ -582,7 +599,7 @@ impl App {
                 self.detail = Some(detail);
             }
             Err(e) => {
-                self.status_msg = format!("Error refreshing: {e}");
+                self.set_status(format!("Error refreshing: {e}"));
             }
         }
     }
@@ -594,11 +611,11 @@ impl App {
             Some(d) => d.key.clone(),
             None => return,
         };
-        self.status_msg = "Loading transitions...".to_string();
+        self.set_status("Loading transitions...");
         match jira::fetch_transitions(&self.config, &key).await {
             Ok(transitions) => {
                 if transitions.is_empty() {
-                    self.status_msg = "No transitions available".to_string();
+                    self.set_status("No transitions available");
                     return;
                 }
                 self.transitions = transitions;
@@ -607,7 +624,7 @@ impl App {
                 self.status_msg.clear();
             }
             Err(e) => {
-                self.status_msg = format!("Error: {e}");
+                self.set_status(format!("Error: {e}"));
             }
         }
     }
@@ -652,17 +669,17 @@ impl App {
         };
         let name = transition.name.clone();
         let id = transition.id.clone();
-        self.status_msg = format!("Transitioning to {name}...");
+        self.set_status(format!("Transitioning to {name}..."));
         match jira::do_transition(&self.config, &key, &id).await {
             Ok(()) => {
                 self.transitions.clear();
                 self.mode = Mode::TicketDetail;
                 self.refresh().await;
                 self.refresh_detail(&key).await;
-                self.status_msg = format!("Transitioned to {name}");
+                self.set_status(format!("Transitioned to {name}"));
             }
             Err(e) => {
-                self.status_msg = format!("Error: {e}");
+                self.set_status(format!("Error: {e}"));
                 self.transitions.clear();
                 self.mode = Mode::TicketDetail;
             }

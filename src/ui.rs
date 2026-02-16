@@ -1527,6 +1527,34 @@ fn draw_long_note_modal(f: &mut Frame, app: &App) {
     f.render_widget(Paragraph::new(help_line), help_area);
 }
 
+// ── Color helpers ───────────────────────────────────────────
+
+fn hsl_to_rgb(h: f64, s: f64, l: f64) -> Color {
+    let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
+    let h_prime = h / 60.0;
+    let x = c * (1.0 - (h_prime % 2.0 - 1.0).abs());
+    let (r1, g1, b1) = match h_prime as u32 {
+        0 => (c, x, 0.0),
+        1 => (x, c, 0.0),
+        2 => (0.0, c, x),
+        3 => (0.0, x, c),
+        4 => (x, 0.0, c),
+        5 => (c, 0.0, x),
+        _ => (0.0, 0.0, 0.0),
+    };
+    let m = l - c / 2.0;
+    Color::Rgb(
+        ((r1 + m) * 255.0) as u8,
+        ((g1 + m) * 255.0) as u8,
+        ((b1 + m) * 255.0) as u8,
+    )
+}
+
+fn rainbow_color(elapsed_ms: u128, saturation: f64, lightness: f64) -> Color {
+    let hue = (elapsed_ms % 1500) as f64 * 360.0 / 1500.0;
+    hsl_to_rgb(hue, saturation, lightness)
+}
+
 // ── Status bar ──────────────────────────────────────────────
 
 fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
@@ -1545,7 +1573,7 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
                     .fg(Color::White),
             ),
             format!(
-                " q:Quit  j/k:Nav  Enter:Open  w:Browser  s:Status  n:Notes  h:Highlight  m:Mute  f:Filter  /:Search  {tree_label}  r:Refresh  ?:Legend "
+                " q:Quit  j/k:Nav  Enter:Open  w:Browser  s:Status  n:Notes  h:Highlight  m:Mute  y:Copy  f:Filter  /:Search  {tree_label}  r:Refresh  ?:Legend "
             ),
         ),
         Mode::Searching => (
@@ -1661,17 +1689,30 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
         ),
     };
 
-    let status = if app.status_msg.is_empty() {
-        String::new()
+    let status_spans: Vec<Span> = if app.status_msg.is_empty() {
+        vec![]
     } else {
-        format!(" │ {}", app.status_msg)
+        let elapsed = app.status_set_at.elapsed();
+        let elapsed_ms = elapsed.as_millis();
+        let is_error = app.status_msg.starts_with("Error");
+
+        let fg = if is_error {
+            Color::Rgb(220, 140, 140)
+        } else {
+            rainbow_color(elapsed_ms, 0.6, 0.7)
+        };
+        vec![
+            Span::styled(" ", Style::default()),
+            Span::styled(app.status_msg.clone(), Style::default().fg(fg)),
+        ]
     };
 
-    let line = Line::from(vec![
+    let mut spans = vec![
         mode_text,
         Span::styled(help_text, Style::default().fg(Color::Rgb(120, 120, 140))),
-        Span::styled(status, Style::default().fg(Color::DarkGray)),
-    ]);
+    ];
+    spans.extend(status_spans);
+    let line = Line::from(spans);
 
     f.render_widget(Paragraph::new(line), area);
 }

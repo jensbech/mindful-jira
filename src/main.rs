@@ -143,9 +143,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut app = App::new(config);
     app.init().await;
     app.refresh().await;
+    app.status_msg.clear();
 
     loop {
         terminal.draw(|f| ui::draw(f, &app))?;
+
+        // Auto-clear stale status messages
+        if !app.status_msg.is_empty() && app.status_set_at.elapsed() > Duration::from_secs(5) {
+            app.status_msg.clear();
+        }
 
         if event::poll(Duration::from_millis(100))? {
             match event::read()? {
@@ -161,6 +167,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::Char('n') => app.start_editing_long_note(),
                             KeyCode::Char('h') => app.toggle_highlight(),
                             KeyCode::Char('m') => app.toggle_mute(),
+                            KeyCode::Char('y') => app.copy_key_to_clipboard(),
                             KeyCode::Char('f') => app.open_filter_editor(),
                             KeyCode::Char('/') => app.start_search(),
                             KeyCode::Char('p') => app.toggle_show_all_parents().await,

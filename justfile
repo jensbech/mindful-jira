@@ -43,8 +43,31 @@ build-linux-arm: (_run "build-linux-arm")
 # Build for Windows x86_64
 build-windows: (_run "build-windows")
 
-# Build all 5 targets, create release directory, and publish to GitHub
-release: (_run "release-all") _publish
+# Bump version, build all targets, and publish to GitHub
+release: _bump (_run "release-all") _publish
+
+# Prompt for version bump type and update Cargo.toml
+[private]
+_bump:
+    #!/usr/bin/env bash
+    set -e
+    CURRENT=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+    IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+    echo "Current version: ${CURRENT}"
+    echo ""
+    echo "  1) patch  → ${MAJOR}.${MINOR}.$((PATCH+1))"
+    echo "  2) minor  → ${MAJOR}.$((MINOR+1)).0"
+    echo "  3) major  → $((MAJOR+1)).0.0"
+    echo ""
+    read -rp "Bump type [1/2/3]: " CHOICE
+    case "$CHOICE" in
+        1|patch) NEW="${MAJOR}.${MINOR}.$((PATCH+1))" ;;
+        2|minor) NEW="${MAJOR}.$((MINOR+1)).0" ;;
+        3|major) NEW="$((MAJOR+1)).0.0" ;;
+        *) echo "Invalid choice"; exit 1 ;;
+    esac
+    sed -i '' "s/^version = \"${CURRENT}\"/version = \"${NEW}\"/" Cargo.toml
+    echo "Bumped ${CURRENT} → ${NEW}"
 
 # Publish release assets to GitHub
 [private]

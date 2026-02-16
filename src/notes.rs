@@ -22,6 +22,25 @@ pub fn save_notes(notes: &HashMap<String, String>) {
     }
 }
 
+fn long_notes_path() -> std::path::PathBuf {
+    config::config_dir().join("long_notes.json")
+}
+
+pub fn load_long_notes() -> HashMap<String, String> {
+    let path = long_notes_path();
+    let contents = match fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(_) => return HashMap::new(),
+    };
+    serde_json::from_str(&contents).unwrap_or_default()
+}
+
+pub fn save_long_notes(notes: &HashMap<String, String>) {
+    if let Ok(json) = serde_json::to_string_pretty(notes) {
+        let _ = fs::write(long_notes_path(), json);
+    }
+}
+
 fn highlight_path() -> std::path::PathBuf {
     config::config_dir().join("highlights.json")
 }

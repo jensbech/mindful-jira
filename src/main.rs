@@ -9,8 +9,8 @@ use std::io::Write;
 use std::time::Duration;
 
 use crossterm::event::{
-    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, MouseButton,
-    MouseEventKind,
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
+    MouseButton, MouseEventKind,
 };
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -157,7 +157,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::Down | KeyCode::Char('j') => app.move_down(),
                             KeyCode::Enter => app.open_ticket_detail().await,
                             KeyCode::Char('w') => app.confirm_open_in_browser(),
-                            KeyCode::Char('n') => app.start_editing_note(),
+                            KeyCode::Char('s') => app.start_editing_status(),
+                            KeyCode::Char('n') => app.start_editing_long_note(),
                             KeyCode::Char('h') => app.toggle_highlight(),
                             KeyCode::Char('f') => app.open_filter_editor(),
                             KeyCode::Char('/') => app.start_search(),
@@ -264,8 +265,81 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::Char('n') | KeyCode::Esc => app.cancel_comment_action(),
                             _ => {}
                         },
+                        Mode::EditingLongNote => {
+                            if key.modifiers.contains(KeyModifiers::CONTROL)
+                                && key.code == KeyCode::Char('s')
+                            {
+                                app.save_long_note();
+                            } else {
+                                match key.code {
+                                    KeyCode::Esc => app.cancel_long_note(),
+                                    KeyCode::Enter => {
+                                        let bp = app.cursor_pos.min(app.long_note_input.len());
+                                        app.long_note_input.insert(bp, '\n');
+                                        app.cursor_pos = bp + 1;
+                                    }
+                                    KeyCode::Left => {
+                                        if app.cursor_pos > 0 {
+                                            app.cursor_pos -= 1;
+                                        }
+                                    }
+                                    KeyCode::Right => {
+                                        if app.cursor_pos < app.long_note_input.len() {
+                                            app.cursor_pos += 1;
+                                        }
+                                    }
+                                    KeyCode::Up => {
+                                        // Move cursor up one line
+                                        let text = &app.long_note_input[..app.cursor_pos];
+                                        if let Some(nl) = text.rfind('\n') {
+                                            let col = app.cursor_pos - nl - 1;
+                                            let prev_line_start = text[..nl].rfind('\n').map(|p| p + 1).unwrap_or(0);
+                                            let prev_line_len = nl - prev_line_start;
+                                            app.cursor_pos = prev_line_start + col.min(prev_line_len);
+                                        }
+                                    }
+                                    KeyCode::Down => {
+                                        // Move cursor down one line
+                                        let text = &app.long_note_input;
+                                        if let Some(nl) = text[app.cursor_pos..].find('\n') {
+                                            let line_start = text[..app.cursor_pos].rfind('\n').map(|p| p + 1).unwrap_or(0);
+                                            let col = app.cursor_pos - line_start;
+                                            let next_line_start = app.cursor_pos + nl + 1;
+                                            let next_line_end = text[next_line_start..].find('\n').map(|p| next_line_start + p).unwrap_or(text.len());
+                                            let next_line_len = next_line_end - next_line_start;
+                                            app.cursor_pos = next_line_start + col.min(next_line_len);
+                                        }
+                                    }
+                                    KeyCode::Home => {
+                                        let line_start = app.long_note_input[..app.cursor_pos].rfind('\n').map(|p| p + 1).unwrap_or(0);
+                                        app.cursor_pos = line_start;
+                                    }
+                                    KeyCode::End => {
+                                        let line_end = app.long_note_input[app.cursor_pos..].find('\n').map(|p| app.cursor_pos + p).unwrap_or(app.long_note_input.len());
+                                        app.cursor_pos = line_end;
+                                    }
+                                    KeyCode::Backspace => {
+                                        if app.cursor_pos > 0 {
+                                            app.cursor_pos -= 1;
+                                            app.long_note_input.remove(app.cursor_pos);
+                                        }
+                                    }
+                                    KeyCode::Delete => {
+                                        if app.cursor_pos < app.long_note_input.len() {
+                                            app.long_note_input.remove(app.cursor_pos);
+                                        }
+                                    }
+                                    KeyCode::Char(c) => {
+                                        let bp = app.cursor_pos.min(app.long_note_input.len());
+                                        app.long_note_input.insert(bp, c);
+                                        app.cursor_pos = bp + 1;
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
                         Mode::EditingNote => match key.code {
-                            KeyCode::Enter => app.save_note(),
+                            KeyCode::Enter => app.save_status(),
                             KeyCode::Esc => app.cancel_edit(),
                             KeyCode::Left => {
                                 if app.cursor_pos > 0 {

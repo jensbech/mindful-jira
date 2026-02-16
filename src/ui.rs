@@ -119,6 +119,10 @@ pub fn draw(f: &mut Frame, app: &App) {
             draw_detail_modal(f, app);
             draw_confirm_transition_modal(f, app);
         }
+        Mode::EditingLongNote => {
+            dim_background(f);
+            draw_long_note_modal(f, app);
+        }
         _ => {}
     }
 
@@ -277,7 +281,7 @@ fn draw_table(f: &mut Frame, app: &App, area: Rect) {
         Cell::from("Status"),
         Cell::from("Resolution"),
         Cell::from("Created"),
-        Cell::from("My Notes"),
+        Cell::from("My Status"),
     ]);
 
     let header = Row::new(header_cells)
@@ -298,10 +302,13 @@ fn draw_table(f: &mut Frame, app: &App, area: Rect) {
             let prefix_len = depth_prefix.chars().count() + icon.chars().count() + 1;
 
             let note = app.notes.get(&issue.key).cloned().unwrap_or_default();
+            let has_long_note = app.long_notes.contains_key(&issue.key);
+            let note_prefix = if has_long_note { "\u{270d} " } else { "" };
+            let avail = notes_chars.saturating_sub(note_prefix.chars().count());
             let note_text = if app.mode == Mode::EditingNote && i == app.selected {
-                visible_input(&app.note_input, app.cursor_pos, notes_chars)
+                format!("{}{}", note_prefix, visible_input(&app.note_input, app.cursor_pos, avail))
             } else {
-                truncate(&note, notes_chars)
+                format!("{}{}", note_prefix, truncate(&note, avail))
             };
 
             let reporter_text = truncate(&issue.reporter, reporter_chars);
@@ -1398,6 +1405,127 @@ fn parse_inline_markdown(text: &str) -> Vec<Span<'static>> {
     spans
 }
 
+// ── Long note modal ─────────────────────────────────────────
+
+fn draw_long_note_modal(f: &mut Frame, app: &App) {
+    let key = app
+        .rows
+        .get(app.selected)
+        .map(|r| r.issue.key.as_str())
+        .unwrap_or("");
+
+    let area = f.area();
+    let width = area.width.saturating_sub(10).min(90);
+    let height = area.height.saturating_sub(6).min(30);
+    let x = (area.width.saturating_sub(width)) / 2;
+    let y = (area.height.saturating_sub(height)) / 2;
+    let modal_area = Rect::new(x, y, width, height);
+
+    f.render_widget(Clear, modal_area);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(ACCENT))
+        .title(Line::from(vec![
+            Span::styled(
+                format!(" Notes: {key} "),
+                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            ),
+        ]));
+
+    let inner = block.inner(modal_area);
+    f.render_widget(block, modal_area);
+
+    // Reserve bottom line for help bar
+    let help_h: u16 = 1;
+    let edit_height = inner.height.saturating_sub(help_h);
+    let edit_area = Rect::new(inner.x, inner.y, inner.width, edit_height);
+    let help_area = Rect::new(inner.x, inner.y + edit_height, inner.width, help_h);
+
+    // Render the text with cursor
+    let text = &app.long_note_input;
+    let cursor_pos = app.cursor_pos.min(text.len());
+
+    // Build display lines from text, inserting a visible cursor marker
+    let text_lines: Vec<&str> = if text.is_empty() { vec![""] } else { text.split('\n').collect() };
+
+    // Figure out which line and column the cursor is on
+    let mut cursor_line = 0usize;
+    let mut cursor_col = 0usize;
+    {
+        let mut pos = 0usize;
+        for (i, line) in text_lines.iter().enumerate() {
+            let line_end = pos + line.len();
+            if cursor_pos <= line_end {
+                cursor_line = i;
+                cursor_col = cursor_pos - pos;
+                break;
+            }
+            pos = line_end + 1; // +1 for '\n'
+            cursor_line = i + 1;
+        }
+    }
+
+    // Auto-scroll to keep cursor visible
+    let visible_h = edit_height as usize;
+    let scroll = if visible_h == 0 {
+        0
+    } else if cursor_line < app.long_note_scroll {
+        cursor_line
+    } else if cursor_line >= app.long_note_scroll + visible_h {
+        cursor_line.saturating_sub(visible_h - 1)
+    } else {
+        app.long_note_scroll
+    };
+
+    let inner_w = inner.width as usize;
+    let mut display_lines: Vec<Line> = Vec::new();
+    for (i, line_text) in text_lines.iter().enumerate().skip(scroll).take(visible_h) {
+        if i == cursor_line {
+            // Show cursor on this line
+            let before = &line_text[..cursor_col.min(line_text.len())];
+            let after = &line_text[cursor_col.min(line_text.len())..];
+            let cursor_char = if after.is_empty() { " " } else { &after[..1] };
+            let rest = if after.is_empty() { "" } else { &after[1..] };
+
+            let mut spans = Vec::new();
+            if !before.is_empty() {
+                spans.push(Span::styled(
+                    truncate(before, inner_w),
+                    Style::default().fg(Color::White),
+                ));
+            }
+            spans.push(Span::styled(
+                cursor_char.to_string(),
+                Style::default().fg(Color::Black).bg(Color::White),
+            ));
+            if !rest.is_empty() {
+                spans.push(Span::styled(
+                    rest.to_string(),
+                    Style::default().fg(Color::White),
+                ));
+            }
+            display_lines.push(Line::from(spans));
+        } else {
+            display_lines.push(Line::from(Span::styled(
+                line_text.to_string(),
+                Style::default().fg(Color::Rgb(200, 200, 210)),
+            )));
+        }
+    }
+
+    f.render_widget(Paragraph::new(display_lines), edit_area);
+
+    // Help bar
+    let has_note = app.long_notes.contains_key(key);
+    let indicator = if has_note { " (has saved note)" } else { "" };
+    let help_line = Line::from(Span::styled(
+        format!("Ctrl+S:Save  Esc:Cancel{indicator}"),
+        Style::default().fg(Color::Rgb(100, 100, 120)),
+    ));
+    f.render_widget(Paragraph::new(help_line), help_area);
+}
+
 // ── Status bar ──────────────────────────────────────────────
 
 fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
@@ -1416,7 +1544,7 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
                     .fg(Color::White),
             ),
             format!(
-                " q:Quit  j/k:Nav  Enter:Open  w:Browser  n:Note  h:Highlight  f:Filter  /:Search  {tree_label}  r:Refresh  ?:Legend "
+                " q:Quit  j/k:Nav  Enter:Open  w:Browser  s:Status  n:Notes  h:Highlight  f:Filter  /:Search  {tree_label}  r:Refresh  ?:Legend "
             ),
         ),
         Mode::Searching => (
@@ -1441,13 +1569,23 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
         ),
         Mode::EditingNote => (
             Span::styled(
-                " EDIT NOTE ",
+                " EDIT STATUS ",
                 Style::default()
                     .bg(Color::Green)
                     .fg(Color::Black)
                     .add_modifier(Modifier::BOLD),
             ),
             " Enter:Save  Esc:Cancel ".to_string(),
+        ),
+        Mode::EditingLongNote => (
+            Span::styled(
+                " EDIT NOTES ",
+                Style::default()
+                    .bg(Color::Rgb(80, 160, 80))
+                    .fg(Color::Black)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            " Ctrl+S:Save  Esc:Cancel  Enter:Newline ".to_string(),
         ),
         Mode::FilterEditor | Mode::FilterAdding => (
             Span::styled(

@@ -10,6 +10,7 @@ pub enum Mode {
     Normal,
     Searching,
     EditingNote,
+    EditingLongNote,
     FilterEditor,
     FilterAdding,
     TicketDetail,
@@ -36,6 +37,9 @@ pub struct App {
     pub search_input: String,
     pub note_input: String,
     pub notes: HashMap<String, String>,
+    pub long_notes: HashMap<String, String>,
+    pub long_note_input: String,
+    pub long_note_scroll: usize,
     pub highlighted_keys: std::collections::HashSet<String>,
     pub config: Config,
     pub status_msg: String,
@@ -71,6 +75,7 @@ pub struct App {
 impl App {
     pub fn new(config: Config) -> Self {
         let notes = notes::load_notes();
+        let long_notes = notes::load_long_notes();
         let highlighted_keys = notes::load_highlights();
         App {
             rows: Vec::new(),
@@ -80,6 +85,9 @@ impl App {
             search_input: String::new(),
             note_input: String::new(),
             notes,
+            long_notes,
+            long_note_input: String::new(),
+            long_note_scroll: 0,
             highlighted_keys,
             config,
             status_msg: String::new(),
@@ -175,7 +183,7 @@ impl App {
         self.mode = Mode::Normal;
     }
 
-    pub fn start_editing_note(&mut self) {
+    pub fn start_editing_status(&mut self) {
         if let Some(row) = self.rows.get(self.selected) {
             self.note_input = self
                 .notes
@@ -187,7 +195,7 @@ impl App {
         }
     }
 
-    pub fn save_note(&mut self) {
+    pub fn save_status(&mut self) {
         if let Some(row) = self.rows.get(self.selected) {
             let key = row.issue.key.clone();
             if self.note_input.is_empty() {
@@ -203,6 +211,38 @@ impl App {
 
     pub fn cancel_edit(&mut self) {
         self.note_input.clear();
+        self.mode = Mode::Normal;
+    }
+
+    pub fn start_editing_long_note(&mut self) {
+        if let Some(row) = self.rows.get(self.selected) {
+            self.long_note_input = self
+                .long_notes
+                .get(&row.issue.key)
+                .cloned()
+                .unwrap_or_default();
+            self.cursor_pos = self.long_note_input.len();
+            self.long_note_scroll = 0;
+            self.mode = Mode::EditingLongNote;
+        }
+    }
+
+    pub fn save_long_note(&mut self) {
+        if let Some(row) = self.rows.get(self.selected) {
+            let key = row.issue.key.clone();
+            if self.long_note_input.is_empty() {
+                self.long_notes.remove(&key);
+            } else {
+                self.long_notes.insert(key, self.long_note_input.clone());
+            }
+            notes::save_long_notes(&self.long_notes);
+        }
+        self.long_note_input.clear();
+        self.mode = Mode::Normal;
+    }
+
+    pub fn cancel_long_note(&mut self) {
+        self.long_note_input.clear();
         self.mode = Mode::Normal;
     }
 

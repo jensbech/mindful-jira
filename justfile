@@ -44,36 +44,31 @@ build-linux-arm: (_run "build-linux-arm")
 build-windows: (_run "build-windows")
 
 # Build all 5 targets, create release directory, and publish to GitHub
-release-all: (_run "release-all")
-    #!/usr/bin/env bash
-    set -e
-    VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
-    TAG="v${VERSION}"
-    echo "Publishing ${TAG} to GitHub..."
-    if gh release view "$TAG" --repo jensbech/mindful-jira &>/dev/null; then
-        echo "Release ${TAG} already exists, uploading assets..."
-        gh release upload "$TAG" release/* --repo jensbech/mindful-jira --clobber
-    else
-        gh release create "$TAG" release/* \
-            --repo jensbech/mindful-jira \
-            --title "$TAG" \
-            --notes "Release ${VERSION}" \
-            --latest
-    fi
-    echo "Done: https://github.com/jensbech/mindful-jira/releases/tag/${TAG}"
+release: (_run "release-all") _publish
 
-# Build ARM binary, create release directory, and publish to GitHub
-release: (_run "release")
+# Publish release assets to GitHub
+[private]
+_publish:
     #!/usr/bin/env bash
     set -e
+    NAME=$(grep '^name' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
     VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
     TAG="v${VERSION}"
-    echo "Publishing ${TAG} to GitHub..."
+    ASSETS=(release/${NAME}-${VERSION}-*)
+    if [ ${#ASSETS[@]} -eq 0 ]; then
+        echo "No release assets found for ${NAME}-${VERSION}"
+        exit 1
+    fi
+    echo "Publishing ${TAG} to GitHub (${#ASSETS[@]} assets)..."
+    git tag -f "$TAG"
+    # Ensure github remote exists
+    git remote get-url github &>/dev/null || git remote add github https://github.com/jensbech/mindful-jira.git
+    git push github "$TAG" --force
     if gh release view "$TAG" --repo jensbech/mindful-jira &>/dev/null; then
         echo "Release ${TAG} already exists, uploading assets..."
-        gh release upload "$TAG" release/* --repo jensbech/mindful-jira --clobber
+        gh release upload "$TAG" "${ASSETS[@]}" --repo jensbech/mindful-jira --clobber
     else
-        gh release create "$TAG" release/* \
+        gh release create "$TAG" "${ASSETS[@]}" \
             --repo jensbech/mindful-jira \
             --title "$TAG" \
             --notes "Release ${VERSION}" \

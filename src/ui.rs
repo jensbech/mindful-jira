@@ -423,10 +423,16 @@ fn draw_table(f: &mut Frame, app: &App, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Rgb(60, 60, 80)))
-        .title(Span::styled(
-            " My Jira Work ",
-            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
-        ));
+        .title(Line::from(vec![
+            Span::styled(
+                " Mindful Jira ",
+                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!("v{} ", env!("CARGO_PKG_VERSION")),
+                Style::default().fg(Color::Rgb(80, 80, 100)),
+            ),
+        ]));
 
     if rows.is_empty() && !app.search_input.is_empty() {
         let empty_rows: Vec<Row> = vec![Row::new(vec![Cell::from(Span::styled(

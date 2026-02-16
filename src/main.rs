@@ -113,9 +113,16 @@ fn run_setup() {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
-    if args.get(1).map(|s| s.as_str()) == Some("setup") {
-        run_setup();
-        return Ok(());
+    match args.get(1).map(|s| s.as_str()) {
+        Some("setup") => {
+            run_setup();
+            return Ok(());
+        }
+        Some("--version" | "-v") => {
+            println!("mindful-jira {}", env!("CARGO_PKG_VERSION"));
+            return Ok(());
+        }
+        _ => {}
     }
 
     let config = match Config::load() {

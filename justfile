@@ -89,20 +89,16 @@ _publish:
     BRANCH=$(git rev-parse --abbrev-ref HEAD)
     git push github "$BRANCH" --force
     git push github "$TAG" --force
+    # Delete any existing release (may be a stale draft) so we always create fresh
     if gh release view "$TAG" --repo jensbech/mindful-jira &>/dev/null; then
-        echo "Release ${TAG} already exists, uploading assets..."
-        gh release upload "$TAG" "${ASSETS[@]}" --repo jensbech/mindful-jira --clobber
-    else
-        gh release create "$TAG" "${ASSETS[@]}" \
-            --repo jensbech/mindful-jira \
-            --title "$TAG" \
-            --notes "Release ${VERSION}" \
-            --latest
+        echo "Deleting existing release ${TAG}..."
+        gh release delete "$TAG" --repo jensbech/mindful-jira --yes --cleanup-tag=false
     fi
-    # gh creates releases as drafts while uploading assets — publish it
-    echo "Waiting for release to finalize..."
-    sleep 5
-    gh release edit "$TAG" --repo jensbech/mindful-jira --draft=false
+    gh release create "$TAG" "${ASSETS[@]}" \
+        --repo jensbech/mindful-jira \
+        --title "$TAG" \
+        --notes "Release ${VERSION}" \
+        --latest
     echo "Published ${TAG}"
     echo "Done: https://github.com/jensbech/mindful-jira/releases/tag/${TAG}"
 

@@ -43,11 +43,43 @@ build-linux-arm: (_run "build-linux-arm")
 # Build for Windows x86_64
 build-windows: (_run "build-windows")
 
-# Build all 5 targets and create release directory
+# Build all 5 targets, create release directory, and publish to GitHub
 release-all: (_run "release-all")
+    #!/usr/bin/env bash
+    set -e
+    VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+    TAG="v${VERSION}"
+    echo "Publishing ${TAG} to GitHub..."
+    if gh release view "$TAG" --repo jensbech/mindful-jira &>/dev/null; then
+        echo "Release ${TAG} already exists, uploading assets..."
+        gh release upload "$TAG" release/* --repo jensbech/mindful-jira --clobber
+    else
+        gh release create "$TAG" release/* \
+            --repo jensbech/mindful-jira \
+            --title "$TAG" \
+            --notes "Release ${VERSION}" \
+            --latest
+    fi
+    echo "Done: https://github.com/jensbech/mindful-jira/releases/tag/${TAG}"
 
-# Build ARM binary and create release directory
+# Build ARM binary, create release directory, and publish to GitHub
 release: (_run "release")
+    #!/usr/bin/env bash
+    set -e
+    VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+    TAG="v${VERSION}"
+    echo "Publishing ${TAG} to GitHub..."
+    if gh release view "$TAG" --repo jensbech/mindful-jira &>/dev/null; then
+        echo "Release ${TAG} already exists, uploading assets..."
+        gh release upload "$TAG" release/* --repo jensbech/mindful-jira --clobber
+    else
+        gh release create "$TAG" release/* \
+            --repo jensbech/mindful-jira \
+            --title "$TAG" \
+            --notes "Release ${VERSION}" \
+            --latest
+    fi
+    echo "Done: https://github.com/jensbech/mindful-jira/releases/tag/${TAG}"
 
 # Build debug version (faster for development)
 build-dev: (_run "build-dev")

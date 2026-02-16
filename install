@@ -1,8 +1,7 @@
 #!/bin/bash
 set -e
 
-FORGEJO_URL="https://git.bechsor.no"
-REPO="jens/mindful-jira"
+REPO="jensbech/mindful-jira"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
 
 echo "Installing mindful-jira..."
@@ -36,13 +35,13 @@ echo "Detected platform: $TARGET"
 # Create install directory
 mkdir -p "$INSTALL_DIR"
 
-# Get latest release info from Forgejo API
+# Get latest release info from GitHub API
 echo "Fetching latest release..."
-API_URL="$FORGEJO_URL/api/v1/repos/$REPO/releases/latest"
+API_URL="https://api.github.com/repos/$REPO/releases/latest"
 RELEASE_JSON=$(curl -fsSL "$API_URL")
 
 # Extract version
-VERSION=$(echo "$RELEASE_JSON" | grep -o '"tag_name":"[^"]*' | cut -d'"' -f4)
+VERSION=$(echo "$RELEASE_JSON" | grep -o '"tag_name": *"[^"]*' | head -1 | cut -d'"' -f4)
 if [ -z "$VERSION" ]; then
     echo "Could not find latest release"
     exit 1
@@ -51,7 +50,7 @@ fi
 echo "Found version: $VERSION"
 
 # Find the binary download URL for this platform
-DOWNLOAD_URL=$(echo "$RELEASE_JSON" | grep -o "\"browser_download_url\":\"[^\"]*${TARGET}[^\"]*" | cut -d'"' -f4 | head -1)
+DOWNLOAD_URL=$(echo "$RELEASE_JSON" | grep -o "\"browser_download_url\": *\"[^\"]*${TARGET}[^\"]*" | head -1 | cut -d'"' -f4)
 
 if [ -z "$DOWNLOAD_URL" ]; then
     echo "Could not find binary for $TARGET"

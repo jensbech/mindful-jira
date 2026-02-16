@@ -9,7 +9,7 @@ A terminal UI for viewing and managing your Jira issues, built with Rust and [ra
 ## Install
 
 ```bash
-curl -fsSL https://git.bechsor.no/jens/mindful-jira/raw/branch/main/install | bash
+curl -fsSL https://raw.githubusercontent.com/jensbech/mindful-jira/main/install | bash
 ```
 
 Binaries available for macOS (ARM64/x86_64), Linux (x86_64/ARM64), and Windows (x86_64).

@@ -84,8 +84,10 @@ _publish:
     fi
     echo "Publishing ${TAG} to GitHub (${#ASSETS[@]} assets)..."
     git tag -f "$TAG"
-    # Ensure github remote exists
+    # Ensure github remote exists and push branch + tag
     git remote get-url github &>/dev/null || git remote add github https://github.com/jensbech/mindful-jira.git
+    BRANCH=$(git rev-parse --abbrev-ref HEAD)
+    git push github "$BRANCH" --force
     git push github "$TAG" --force
     if gh release view "$TAG" --repo jensbech/mindful-jira &>/dev/null; then
         echo "Release ${TAG} already exists, uploading assets..."
@@ -95,7 +97,8 @@ _publish:
             --repo jensbech/mindful-jira \
             --title "$TAG" \
             --notes "Release ${VERSION}" \
-            --latest
+            --latest \
+            --draft=false
     fi
     echo "Done: https://github.com/jensbech/mindful-jira/releases/tag/${TAG}"
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env just --justfile
 
-# Centralized build script (raw URL)
-BUILD_SCRIPT := "https://git.bechsor.no/jens/rust-build-tools/raw/branch/main/rust-build"
+# Centralized build script (GitHub release)
+BUILD_SCRIPT := "https://github.com/jensbech/rust-build-tools/releases/latest/download/rust-build"
 
 # Default recipe
 default:

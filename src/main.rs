@@ -223,49 +223,105 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             _ => {}
                         },
                         Mode::DetailAddingComment | Mode::DetailEditingComment => {
-                            match key.code {
-                                KeyCode::Enter => {
-                                    if app.mode == Mode::DetailAddingComment {
-                                        app.submit_comment().await;
-                                    } else {
-                                        app.save_edited_comment().await;
+                            if app.mention.is_some() {
+                                // Mention overlay active
+                                match key.code {
+                                    KeyCode::Up => app.mention_move_up(),
+                                    KeyCode::Down => app.mention_move_down(),
+                                    KeyCode::Enter | KeyCode::Tab => {
+                                        app.select_mention();
                                     }
-                                }
-                                KeyCode::Esc => app.cancel_comment_action(),
-                                KeyCode::Left => {
-                                    if app.cursor_pos > 0 {
-                                        app.cursor_pos -= 1;
+                                    KeyCode::Esc => app.cancel_mention(),
+                                    KeyCode::Backspace => {
+                                        let trigger_pos = app.mention.as_ref().map(|m| m.trigger_pos).unwrap_or(0);
+                                        input_backspace(
+                                            &mut app.comment_input,
+                                            &mut app.cursor_pos,
+                                        );
+                                        // Cancel mention if cursor retreated past '@'
+                                        if app.cursor_pos < trigger_pos {
+                                            app.cancel_mention();
+                                        } else {
+                                            app.update_mention_query();
+                                            app.fetch_mention_candidates().await;
+                                        }
                                     }
-                                }
-                                KeyCode::Right => {
-                                    if app.cursor_pos < app.comment_input.chars().count() {
-                                        app.cursor_pos += 1;
+                                    KeyCode::Char(' ') => {
+                                        app.cancel_mention();
+                                        input_insert(
+                                            &mut app.comment_input,
+                                            &mut app.cursor_pos,
+                                            ' ',
+                                        );
                                     }
+                                    KeyCode::Char(c) => {
+                                        input_insert(
+                                            &mut app.comment_input,
+                                            &mut app.cursor_pos,
+                                            c,
+                                        );
+                                        app.update_mention_query();
+                                        app.fetch_mention_candidates().await;
+                                    }
+                                    _ => {}
                                 }
-                                KeyCode::Home => app.cursor_pos = 0,
-                                KeyCode::End => {
-                                    app.cursor_pos = app.comment_input.chars().count()
+                            } else {
+                                // Normal comment editing
+                                match key.code {
+                                    KeyCode::Enter => {
+                                        if app.mode == Mode::DetailAddingComment {
+                                            app.submit_comment().await;
+                                        } else {
+                                            app.save_edited_comment().await;
+                                        }
+                                    }
+                                    KeyCode::Esc => app.cancel_comment_action(),
+                                    KeyCode::Left => {
+                                        if app.cursor_pos > 0 {
+                                            app.cursor_pos -= 1;
+                                        }
+                                    }
+                                    KeyCode::Right => {
+                                        if app.cursor_pos < app.comment_input.chars().count() {
+                                            app.cursor_pos += 1;
+                                        }
+                                    }
+                                    KeyCode::Home => app.cursor_pos = 0,
+                                    KeyCode::End => {
+                                        app.cursor_pos = app.comment_input.chars().count()
+                                    }
+                                    KeyCode::Backspace => {
+                                        input_backspace(
+                                            &mut app.comment_input,
+                                            &mut app.cursor_pos,
+                                        );
+                                        app.invalidate_overlapping_mentions();
+                                    }
+                                    KeyCode::Delete => {
+                                        input_delete(
+                                            &mut app.comment_input,
+                                            &mut app.cursor_pos,
+                                        );
+                                        app.invalidate_overlapping_mentions();
+                                    }
+                                    KeyCode::Char('@') => {
+                                        input_insert(
+                                            &mut app.comment_input,
+                                            &mut app.cursor_pos,
+                                            '@',
+                                        );
+                                        app.activate_mention();
+                                    }
+                                    KeyCode::Char(c) => {
+                                        input_insert(
+                                            &mut app.comment_input,
+                                            &mut app.cursor_pos,
+                                            c,
+                                        );
+                                        app.invalidate_overlapping_mentions();
+                                    }
+                                    _ => {}
                                 }
-                                KeyCode::Backspace => {
-                                    input_backspace(
-                                        &mut app.comment_input,
-                                        &mut app.cursor_pos,
-                                    );
-                                }
-                                KeyCode::Delete => {
-                                    input_delete(
-                                        &mut app.comment_input,
-                                        &mut app.cursor_pos,
-                                    );
-                                }
-                                KeyCode::Char(c) => {
-                                    input_insert(
-                                        &mut app.comment_input,
-                                        &mut app.cursor_pos,
-                                        c,
-                                    );
-                                }
-                                _ => {}
                             }
                         }
                         Mode::DetailConfirmDelete => match key.code {

@@ -1,6 +1,22 @@
 use crate::config::Config;
 use serde::Deserialize;
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct JiraUser {
+    #[serde(rename = "accountId")]
+    pub account_id: String,
+    #[serde(rename = "displayName")]
+    pub display_name: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct MentionInsert {
+    pub start: usize,
+    pub len: usize,
+    pub account_id: String,
+    pub display_name: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct JiraIssue {
     pub key: String,
@@ -104,6 +120,35 @@ pub async fn fetch_current_account_id(config: &Config) -> Result<String, String>
         .as_str()
         .unwrap_or("")
         .to_string())
+}
+
+// --- User search ---
+
+pub async fn search_users(config: &Config, query: &str) -> Result<Vec<JiraUser>, String> {
+    let url = format!(
+        "{}/rest/api/3/user/search",
+        config.jira_url.trim_end_matches('/')
+    );
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(&url)
+        .basic_auth(&config.email, Some(&config.api_token))
+        .query(&[("query", query), ("maxResults", "8")])
+        .send()
+        .await
+        .map_err(|e| format!("HTTP request failed: {e}"))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("Jira API error {status}: {body}"));
+    }
+
+    let users: Vec<JiraUser> = resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse: {e}"))?;
+    Ok(users)
 }
 
 // --- Issue list ---
@@ -452,14 +497,68 @@ fn format_date(iso: &str) -> String {
 
 // --- Comment CRUD ---
 
-fn text_to_adf(text: &str) -> serde_json::Value {
+fn text_to_adf(text: &str, mentions: &[MentionInsert]) -> serde_json::Value {
+    // Build a sorted list of mentions by start position
+    let mut sorted_mentions: Vec<&MentionInsert> = mentions.iter().collect();
+    sorted_mentions.sort_by_key(|m| m.start);
+
+    let chars: Vec<char> = text.chars().collect();
     let paragraphs: Vec<serde_json::Value> = text
         .split('\n')
-        .map(|line| {
-            serde_json::json!({
+        .enumerate()
+        .scan(0usize, |char_offset, (_line_idx, line)| {
+            let line_start = *char_offset;
+            let line_char_count = line.chars().count();
+            let line_end = line_start + line_char_count;
+
+            // Find mentions that fall within this line
+            let line_mentions: Vec<&&MentionInsert> = sorted_mentions
+                .iter()
+                .filter(|m| m.start >= line_start && m.start < line_end)
+                .collect();
+
+            let content = if line_mentions.is_empty() {
+                vec![serde_json::json!({ "type": "text", "text": line })]
+            } else {
+                let mut nodes: Vec<serde_json::Value> = Vec::new();
+                let mut pos = line_start;
+                for mention in &line_mentions {
+                    if mention.start > pos {
+                        let segment: String = chars[pos..mention.start].iter().collect();
+                        if !segment.is_empty() {
+                            nodes.push(serde_json::json!({ "type": "text", "text": segment }));
+                        }
+                    }
+                    nodes.push(serde_json::json!({
+                        "type": "mention",
+                        "attrs": {
+                            "id": mention.account_id,
+                            "text": format!("@{}", mention.display_name),
+                            "accessLevel": ""
+                        }
+                    }));
+                    pos = mention.start + mention.len;
+                }
+                if pos < line_end {
+                    let segment: String = chars[pos..line_end].iter().collect();
+                    if !segment.is_empty() {
+                        nodes.push(serde_json::json!({ "type": "text", "text": segment }));
+                    }
+                }
+                if nodes.is_empty() {
+                    vec![serde_json::json!({ "type": "text", "text": "" })]
+                } else {
+                    nodes
+                }
+            };
+
+            // +1 for the newline character
+            *char_offset = line_end + 1;
+
+            Some(serde_json::json!({
                 "type": "paragraph",
-                "content": [{ "type": "text", "text": line }]
-            })
+                "content": content
+            }))
         })
         .collect();
 
@@ -474,6 +573,7 @@ pub async fn add_comment(
     config: &Config,
     issue_key: &str,
     body_text: &str,
+    mentions: &[MentionInsert],
 ) -> Result<(), String> {
     let url = format!(
         "{}/rest/api/3/issue/{}/comment",
@@ -481,7 +581,7 @@ pub async fn add_comment(
         issue_key
     );
 
-    let payload = serde_json::json!({ "body": text_to_adf(body_text) });
+    let payload = serde_json::json!({ "body": text_to_adf(body_text, mentions) });
 
     let client = reqwest::Client::new();
     let resp = client
@@ -506,6 +606,7 @@ pub async fn update_comment(
     issue_key: &str,
     comment_id: &str,
     body_text: &str,
+    mentions: &[MentionInsert],
 ) -> Result<(), String> {
     let url = format!(
         "{}/rest/api/3/issue/{}/comment/{}",
@@ -514,7 +615,7 @@ pub async fn update_comment(
         comment_id
     );
 
-    let payload = serde_json::json!({ "body": text_to_adf(body_text) });
+    let payload = serde_json::json!({ "body": text_to_adf(body_text, mentions) });
 
     let client = reqwest::Client::new();
     let resp = client

@@ -3,8 +3,23 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use crate::config::{Config, StatusFilter};
-use crate::jira::{self, IssueDetail, Transition};
+use crate::jira::{self, IssueDetail, JiraUser, MentionInsert, Transition};
 use crate::notes;
+
+pub struct MentionState {
+    pub trigger_pos: usize,
+    pub query: String,
+    pub candidates: Vec<JiraUser>,
+    pub selected: usize,
+}
+
+#[derive(Clone, Debug)]
+pub struct ResolvedMention {
+    pub start_pos: usize,
+    pub len: usize,
+    pub account_id: String,
+    pub display_name: String,
+}
 
 #[derive(PartialEq)]
 pub enum Mode {
@@ -73,6 +88,9 @@ pub struct App {
     pub current_account_id: String,
     // Legend toggle
     pub show_legend: bool,
+    // Mention state
+    pub mention: Option<MentionState>,
+    pub resolved_mentions: Vec<ResolvedMention>,
 }
 
 impl App {
@@ -115,6 +133,8 @@ impl App {
             transition_selected: 0,
             current_account_id: String::new(),
             show_legend: false,
+            mention: None,
+            resolved_mentions: Vec::new(),
         }
     }
 
@@ -460,6 +480,8 @@ impl App {
     pub fn start_adding_comment(&mut self) {
         self.comment_input.clear();
         self.cursor_pos = 0;
+        self.mention = None;
+        self.resolved_mentions.clear();
         self.mode = Mode::DetailAddingComment;
     }
 
@@ -483,6 +505,8 @@ impl App {
         self.comment_input = comment.body.clone();
         self.cursor_pos = self.comment_input.chars().count();
         self.editing_comment_id = Some(comment.id.clone());
+        self.mention = None;
+        self.resolved_mentions.clear();
         self.mode = Mode::DetailEditingComment;
     }
 
@@ -505,6 +529,8 @@ impl App {
     pub fn cancel_comment_action(&mut self) {
         self.comment_input.clear();
         self.editing_comment_id = None;
+        self.mention = None;
+        self.resolved_mentions.clear();
         self.mode = Mode::TicketDetail;
     }
 
@@ -518,11 +544,14 @@ impl App {
             Some(d) => d.key.clone(),
             None => return,
         };
+        let mentions = self.build_mention_inserts();
         self.set_status("Adding comment...");
-        match jira::add_comment(&self.config, &key, &text).await {
+        match jira::add_comment(&self.config, &key, &text, &mentions).await {
             Ok(()) => {
                 self.set_status("Comment added");
                 self.comment_input.clear();
+                self.mention = None;
+                self.resolved_mentions.clear();
                 self.mode = Mode::TicketDetail;
                 self.refresh_detail(&key).await;
             }
@@ -547,12 +576,15 @@ impl App {
             Some(id) => id.clone(),
             None => return,
         };
+        let mentions = self.build_mention_inserts();
         self.set_status("Updating comment...");
-        match jira::update_comment(&self.config, &key, &comment_id, &text).await {
+        match jira::update_comment(&self.config, &key, &comment_id, &text, &mentions).await {
             Ok(()) => {
                 self.set_status("Comment updated");
                 self.comment_input.clear();
                 self.editing_comment_id = None;
+                self.mention = None;
+                self.resolved_mentions.clear();
                 self.mode = Mode::TicketDetail;
                 self.refresh_detail(&key).await;
             }
@@ -602,6 +634,160 @@ impl App {
                 self.set_status(format!("Error refreshing: {e}"));
             }
         }
+    }
+
+    // --- Mention methods ---
+
+    pub fn activate_mention(&mut self) {
+        self.mention = Some(MentionState {
+            trigger_pos: self.cursor_pos,
+            query: String::new(),
+            candidates: Vec::new(),
+            selected: 0,
+        });
+    }
+
+    pub fn update_mention_query(&mut self) {
+        if let Some(ref mut mention) = self.mention {
+            let chars: Vec<char> = self.comment_input.chars().collect();
+            // The trigger_pos points to the position right after the '@' char
+            // '@' is at trigger_pos - 1, query starts at trigger_pos
+            if mention.trigger_pos <= chars.len() {
+                let query: String = chars[mention.trigger_pos..self.cursor_pos].iter().collect();
+                mention.query = query;
+            }
+        }
+    }
+
+    pub fn mention_move_up(&mut self) {
+        if let Some(ref mut mention) = self.mention {
+            if mention.selected > 0 {
+                mention.selected -= 1;
+            }
+        }
+    }
+
+    pub fn mention_move_down(&mut self) {
+        if let Some(ref mut mention) = self.mention {
+            if !mention.candidates.is_empty()
+                && mention.selected < mention.candidates.len() - 1
+            {
+                mention.selected += 1;
+            }
+        }
+    }
+
+    pub fn select_mention(&mut self) {
+        let (trigger_pos, account_id, display_name) = match &self.mention {
+            Some(mention) => {
+                let candidate = match mention.candidates.get(mention.selected) {
+                    Some(c) => c,
+                    None => return,
+                };
+                (
+                    mention.trigger_pos,
+                    candidate.account_id.clone(),
+                    candidate.display_name.clone(),
+                )
+            }
+            None => return,
+        };
+
+        // The '@' is at trigger_pos - 1, query runs from trigger_pos to cursor_pos
+        let at_pos = trigger_pos - 1;
+        let replace_text = format!("@{} ", display_name);
+        let replace_char_len = replace_text.chars().count();
+
+        // Remove from '@' position to current cursor position
+        let chars: Vec<char> = self.comment_input.chars().collect();
+        let mut new_chars: Vec<char> = Vec::new();
+        new_chars.extend_from_slice(&chars[..at_pos]);
+        new_chars.extend(replace_text.chars());
+        new_chars.extend_from_slice(&chars[self.cursor_pos..]);
+        self.comment_input = new_chars.iter().collect();
+
+        let old_cursor = self.cursor_pos;
+        self.cursor_pos = at_pos + replace_char_len;
+
+        // Record the resolved mention (the @DisplayName part, excluding trailing space)
+        let mention_text_len = replace_char_len - 1; // exclude trailing space
+        self.resolved_mentions.push(ResolvedMention {
+            start_pos: at_pos,
+            len: mention_text_len,
+            account_id,
+            display_name,
+        });
+
+        // Adjust positions of existing resolved mentions that come after the edit
+        let chars_removed = old_cursor - at_pos;
+        let chars_added = replace_char_len;
+        let shift = chars_added as isize - chars_removed as isize;
+        if shift != 0 {
+            for rm in &mut self.resolved_mentions {
+                if rm.start_pos > at_pos
+                    && rm.start_pos != at_pos // skip the one we just added
+                {
+                    rm.start_pos = (rm.start_pos as isize + shift) as usize;
+                }
+            }
+        }
+
+        self.mention = None;
+    }
+
+    pub fn cancel_mention(&mut self) {
+        self.mention = None;
+    }
+
+    pub async fn fetch_mention_candidates(&mut self) {
+        let query = match &self.mention {
+            Some(m) => m.query.clone(),
+            None => return,
+        };
+        if query.is_empty() {
+            if let Some(ref mut mention) = self.mention {
+                mention.candidates.clear();
+                mention.selected = 0;
+            }
+            return;
+        }
+        match jira::search_users(&self.config, &query).await {
+            Ok(users) => {
+                if let Some(ref mut mention) = self.mention {
+                    mention.candidates = users;
+                    mention.selected = 0;
+                }
+            }
+            Err(_) => {
+                // Silently ignore search errors
+            }
+        }
+    }
+
+    pub fn invalidate_overlapping_mentions(&mut self) {
+        let chars: Vec<char> = self.comment_input.chars().collect();
+        self.resolved_mentions.retain(|rm| {
+            let end = rm.start_pos + rm.len;
+            if end > chars.len() {
+                return false;
+            }
+            // Check that the text at the recorded position still matches @DisplayName
+            let expected = format!("@{}", rm.display_name);
+            let actual: String = chars[rm.start_pos..end].iter().collect();
+            actual == expected
+        });
+    }
+
+    fn build_mention_inserts(&self) -> Vec<MentionInsert> {
+        self.resolved_mentions
+            .iter()
+            .map(|rm| MentionInsert {
+                start: rm.start_pos,
+                len: rm.len,
+                account_id: rm.account_id.clone(),
+                display_name: rm.display_name.clone(),
+            })
+            .collect()
     }
 
     // --- Transitions ---

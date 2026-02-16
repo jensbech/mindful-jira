@@ -735,8 +735,18 @@ fn draw_detail_modal(f: &mut Frame, app: &App) {
         app.mode == Mode::DetailAddingComment || app.mode == Mode::DetailEditingComment;
     let confirm_deleting = app.mode == Mode::DetailConfirmDelete;
     let picking_transition = app.mode == Mode::DetailTransition;
+    let mention_count = app
+        .mention
+        .as_ref()
+        .map(|m| m.candidates.len())
+        .unwrap_or(0);
+    let mention_rows = if app.mention.is_some() && mention_count > 0 {
+        mention_count as u16
+    } else {
+        0
+    };
     let bottom_reserve: u16 = if input_editing {
-        4
+        4 + mention_rows
     } else if confirm_deleting {
         2
     } else if picking_transition {
@@ -924,6 +934,34 @@ fn draw_detail_modal(f: &mut Frame, app: &App) {
             Style::default().fg(Color::Rgb(100, 100, 140)),
         )));
 
+        // Mention dropdown (between header and input line)
+        if let Some(ref mention) = app.mention {
+            if !mention.candidates.is_empty() {
+                for (i, candidate) in mention.candidates.iter().enumerate() {
+                    let selected = i == mention.selected;
+                    let marker = if selected { "▶ " } else { "  " };
+                    let name_style = if selected {
+                        Style::default()
+                            .fg(Color::White)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(Color::Rgb(180, 180, 200))
+                    };
+                    bottom_lines.push(Line::from(vec![
+                        Span::styled(
+                            format!("\u{2502} {marker}"),
+                            Style::default().fg(Color::Rgb(100, 100, 140)),
+                        ),
+                        Span::styled(candidate.display_name.clone(), name_style),
+                    ]));
+                }
+                bottom_lines.push(Line::from(Span::styled(
+                    format!("├{}", "─".repeat(inner_w.saturating_sub(1))),
+                    Style::default().fg(Color::Rgb(100, 100, 140)),
+                )));
+            }
+        }
+
         bottom_lines.push(Line::from(Span::styled(
             format!(
                 "\u{2502} {}",
@@ -941,8 +979,13 @@ fn draw_detail_modal(f: &mut Frame, app: &App) {
             Style::default().fg(Color::Rgb(100, 100, 140)),
         )));
 
+        let help_text = if app.mention.is_some() {
+            "↑↓:Navigate  Enter/Tab:Select  Esc:Cancel"
+        } else {
+            "Enter:Submit  Esc:Cancel  @:Mention user"
+        };
         bottom_lines.push(Line::from(Span::styled(
-            "Enter:Submit  Esc:Cancel",
+            help_text,
             Style::default().fg(Color::Rgb(100, 100, 120)),
         )));
     } else if confirm_deleting {

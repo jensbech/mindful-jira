@@ -7,7 +7,7 @@ use ratatui::widgets::{
 };
 use ratatui::Frame;
 
-use crate::app::{App, Mode};
+use crate::app::{fuzzy_match, App, Mode};
 
 const ZEBRA_DARK: Color = Color::Rgb(30, 30, 40);
 const HIGHLIGHT_BG: Color = Color::Rgb(55, 55, 80);
@@ -77,11 +77,25 @@ fn visible_input(input: &str, cursor_pos: usize, max_chars: usize) -> String {
 }
 
 pub fn draw(f: &mut Frame, app: &App) {
-    let chunks =
-        Layout::vertical([Constraint::Min(3), Constraint::Length(1)]).split(f.area());
+    let show_search_bar = app.mode == Mode::Searching || !app.search_input.is_empty();
+    let constraints = if show_search_bar {
+        vec![
+            Constraint::Min(3),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ]
+    } else {
+        vec![Constraint::Min(3), Constraint::Length(1)]
+    };
+    let chunks = Layout::vertical(constraints).split(f.area());
 
     draw_table(f, app, chunks[0]);
-    draw_status_bar(f, app, chunks[1]);
+    if show_search_bar {
+        draw_search_bar(f, app, chunks[1]);
+        draw_status_bar(f, app, chunks[2]);
+    } else {
+        draw_status_bar(f, app, chunks[1]);
+    }
 
     match app.mode {
         Mode::ConfirmBrowser => {
@@ -321,11 +335,50 @@ fn draw_table(f: &mut Frame, app: &App, area: Rect) {
 
             let ic = icon_color;
             let key_summary_text = truncate(&key_summary, work_chars.saturating_sub(prefix_len));
-            let work_cell = Cell::from(Line::from(vec![
+
+            // Build Work cell with optional fuzzy match highlighting
+            let text_spans = if !app.search_input.is_empty() {
+                if let Some(positions) = fuzzy_match(&key_summary, &app.search_input) {
+                    // Map positions from key_summary to key_summary_text
+                    let max_pos = key_summary_text.chars().count();
+                    let highlight_set: std::collections::HashSet<usize> =
+                        positions.into_iter().filter(|&p| p < max_pos).collect();
+                    let mut spans = Vec::new();
+                    let normal_style = base_style.bg(bg);
+                    let match_style = Style::default()
+                        .fg(Color::Rgb(255, 200, 60))
+                        .bg(bg)
+                        .add_modifier(Modifier::BOLD);
+                    let mut current = String::new();
+                    let mut current_is_match = false;
+                    for (ci, ch) in key_summary_text.chars().enumerate() {
+                        let is_match = highlight_set.contains(&ci);
+                        if is_match != current_is_match && !current.is_empty() {
+                            let style = if current_is_match { match_style } else { normal_style };
+                            spans.push(Span::styled(std::mem::take(&mut current), style));
+                        }
+                        current.push(ch);
+                        current_is_match = is_match;
+                    }
+                    if !current.is_empty() {
+                        let style = if current_is_match { match_style } else { normal_style };
+                        spans.push(Span::styled(current, style));
+                    }
+                    spans
+                } else {
+                    vec![Span::styled(key_summary_text.clone(), base_style.bg(bg))]
+                }
+            } else {
+                vec![Span::styled(key_summary_text.clone(), base_style.bg(bg))]
+            };
+
+            let mut work_spans = vec![
                 Span::styled(depth_prefix.to_string(), base_style.bg(bg)),
                 Span::styled(icon.to_string(), Style::default().fg(ic).bg(bg)),
-                Span::styled(format!(" {key_summary_text}"), base_style.bg(bg)),
-            ]));
+                Span::styled(" ".to_string(), base_style.bg(bg)),
+            ];
+            work_spans.extend(text_spans);
+            let work_cell = Cell::from(Line::from(work_spans));
             let mut cells = vec![work_cell];
             if show_assignee {
                 let assignee_style = if is_parent {
@@ -375,21 +428,35 @@ fn draw_table(f: &mut Frame, app: &App, area: Rect) {
             Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
         ));
 
-    let table = Table::new(rows, widths)
-        .header(header)
-        .block(block)
-        .column_spacing(COL_SPACING)
-        .row_highlight_style(
-            Style::default()
-                .bg(HIGHLIGHT_BG)
-                .add_modifier(Modifier::BOLD),
-        )
-        .highlight_symbol("▶ ");
+    if rows.is_empty() && !app.search_input.is_empty() {
+        let empty_rows: Vec<Row> = vec![Row::new(vec![Cell::from(Span::styled(
+            "  No matches",
+            Style::default().fg(Color::DarkGray),
+        ))])];
+        let table = Table::new(empty_rows, widths)
+            .header(header)
+            .block(block)
+            .column_spacing(COL_SPACING);
+        f.render_widget(table, area);
+    } else {
+        let table = Table::new(rows, widths)
+            .header(header)
+            .block(block)
+            .column_spacing(COL_SPACING)
+            .row_highlight_style(
+                Style::default()
+                    .bg(HIGHLIGHT_BG)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .highlight_symbol("▶ ");
 
-    let mut state = TableState::default();
-    state.select(Some(app.selected));
+        let mut state = TableState::default();
+        if !app.rows.is_empty() {
+            state.select(Some(app.selected));
+        }
 
-    f.render_stateful_widget(table, area, &mut state);
+        f.render_stateful_widget(table, area, &mut state);
+    }
 }
 
 // ── Confirm browser modal ────────────────────────────────────
@@ -1343,8 +1410,18 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
                     .fg(Color::White),
             ),
             format!(
-                " q:Quit  j/k:Nav  Enter:Open  w:Browser  n:Note  h:Highlight  f:Filter  {tree_label}  r:Refresh  ?:Legend "
+                " q:Quit  j/k:Nav  Enter:Open  w:Browser  n:Note  h:Highlight  f:Filter  /:Search  {tree_label}  r:Refresh  ?:Legend "
             ),
+        ),
+        Mode::Searching => (
+            Span::styled(
+                " SEARCH ",
+                Style::default()
+                    .bg(Color::Rgb(180, 160, 40))
+                    .fg(Color::Black)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            " Type to filter  ↑↓:Navigate  Enter:Keep filter  Esc:Clear ".to_string(),
         ),
         Mode::ConfirmBrowser => (
             Span::styled(
@@ -1452,4 +1529,27 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
     ]);
 
     f.render_widget(Paragraph::new(line), area);
+}
+
+fn draw_search_bar(f: &mut Frame, app: &App, area: Rect) {
+    let cursor = if app.mode == Mode::Searching { "│" } else { "" };
+    let line = Line::from(vec![
+        Span::styled(
+            " /",
+            Style::default()
+                .fg(Color::Rgb(255, 200, 60))
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            app.search_input.clone(),
+            Style::default().fg(Color::White),
+        ),
+        Span::styled(cursor.to_string(), Style::default().fg(Color::Rgb(255, 200, 60))),
+        Span::styled(
+            format!("  ({} matches)", app.rows.len()),
+            Style::default().fg(Color::Rgb(100, 100, 120)),
+        ),
+    ]);
+
+    f.render_widget(Paragraph::new(line).style(Style::default().bg(Color::Rgb(25, 25, 35))), area);
 }

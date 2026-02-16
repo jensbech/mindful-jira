@@ -153,9 +153,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::Char('n') => app.start_editing_note(),
                             KeyCode::Char('h') => app.toggle_highlight(),
                             KeyCode::Char('f') => app.open_filter_editor(),
+                            KeyCode::Char('/') => app.start_search(),
                             KeyCode::Char('p') => app.toggle_show_all_parents().await,
                             KeyCode::Char('r') => app.refresh().await,
                             KeyCode::Char('?') => app.show_legend = !app.show_legend,
+                            _ => {}
+                        },
+                        Mode::Searching => match key.code {
+                            KeyCode::Esc => app.clear_search(),
+                            KeyCode::Enter => app.confirm_search(),
+                            KeyCode::Up | KeyCode::Char('\x1b') => app.move_up(),
+                            KeyCode::Down => app.move_down(),
+                            KeyCode::Backspace => {
+                                app.search_input.pop();
+                                app.apply_search_filter();
+                            }
+                            KeyCode::Char(c) => {
+                                app.search_input.push(c);
+                                app.apply_search_filter();
+                            }
                             _ => {}
                         },
                         Mode::ConfirmBrowser => match key.code {
@@ -327,7 +343,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         | Mode::DetailConfirmDelete
                         | Mode::DetailTransition
                         | Mode::DetailConfirmTransition => app.detail_scroll_up(),
-                        Mode::Normal => app.move_up(),
+                        Mode::Normal | Mode::Searching => app.move_up(),
                         _ => {}
                     },
                     MouseEventKind::ScrollDown => match app.mode {
@@ -337,7 +353,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         | Mode::DetailConfirmDelete
                         | Mode::DetailTransition
                         | Mode::DetailConfirmTransition => app.detail_scroll_down(),
-                        Mode::Normal => app.move_down(),
+                        Mode::Normal | Mode::Searching => app.move_down(),
                         _ => {}
                     },
                     _ => {}

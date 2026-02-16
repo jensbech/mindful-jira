@@ -8,6 +8,7 @@ use crate::notes;
 #[derive(PartialEq)]
 pub enum Mode {
     Normal,
+    Searching,
     EditingNote,
     FilterEditor,
     FilterAdding,
@@ -20,6 +21,7 @@ pub enum Mode {
     DetailConfirmTransition,
 }
 
+#[derive(Clone)]
 pub struct DisplayRow {
     pub issue: jira::JiraIssue,
     pub depth: u8,
@@ -28,8 +30,10 @@ pub struct DisplayRow {
 
 pub struct App {
     pub rows: Vec<DisplayRow>,
+    pub all_rows: Vec<DisplayRow>,
     pub selected: usize,
     pub mode: Mode,
+    pub search_input: String,
     pub note_input: String,
     pub notes: HashMap<String, String>,
     pub highlighted_keys: std::collections::HashSet<String>,
@@ -70,8 +74,10 @@ impl App {
         let highlighted_keys = notes::load_highlights();
         App {
             rows: Vec::new(),
+            all_rows: Vec::new(),
             selected: 0,
             mode: Mode::Normal,
+            search_input: String::new(),
             note_input: String::new(),
             notes,
             highlighted_keys,
@@ -109,7 +115,7 @@ impl App {
         self.status_msg = "Fetching issues...".to_string();
         match jira::fetch_issues(&self.config, self.show_all_parents).await {
             Ok(issues) => {
-                self.rows = issues
+                self.all_rows = issues
                     .into_iter()
                     .map(|issue| {
                         let depth = if issue.is_subtask || issue.parent_key.is_some() {
@@ -125,11 +131,9 @@ impl App {
                         }
                     })
                     .collect();
-                let count = self.rows.len();
+                let count = self.all_rows.len();
                 self.status_msg = format!("Loaded {count} issues");
-                if self.selected >= self.rows.len() {
-                    self.selected = self.rows.len().saturating_sub(1);
-                }
+                self.apply_search_filter();
             }
             Err(e) => {
                 self.status_msg = format!("Error: {e}");
@@ -210,6 +214,49 @@ impl App {
             }
             notes::save_highlights(&self.highlighted_keys);
         }
+    }
+
+    // --- Fuzzy search ---
+
+    pub fn start_search(&mut self) {
+        self.search_input.clear();
+        self.mode = Mode::Searching;
+    }
+
+    pub fn apply_search_filter(&mut self) {
+        if self.search_input.is_empty() {
+            self.rows = self.all_rows.clone();
+        } else {
+            self.rows = self
+                .all_rows
+                .iter()
+                .filter(|row| {
+                    let haystack = format!("{} {}", row.issue.key, row.issue.summary);
+                    fuzzy_match(&haystack, &self.search_input).is_some()
+                })
+                .cloned()
+                .collect();
+        }
+        if self.rows.is_empty() {
+            self.selected = 0;
+        } else if self.selected >= self.rows.len() {
+            self.selected = self.rows.len() - 1;
+        }
+    }
+
+    pub fn confirm_search(&mut self) {
+        self.mode = Mode::Normal;
+    }
+
+    pub fn clear_search(&mut self) {
+        self.search_input.clear();
+        self.rows = self.all_rows.clone();
+        if self.rows.is_empty() {
+            self.selected = 0;
+        } else if self.selected >= self.rows.len() {
+            self.selected = self.rows.len() - 1;
+        }
+        self.mode = Mode::Normal;
     }
 
     // --- Ticket detail ---
@@ -659,6 +706,32 @@ impl App {
         self.show_all_parents = !self.show_all_parents;
         self.refresh().await;
     }
+}
+
+/// Case-insensitive subsequence fuzzy match. Returns matched char positions if all
+/// needle chars are found in order within the haystack.
+pub fn fuzzy_match(haystack: &str, needle: &str) -> Option<Vec<usize>> {
+    let haystack_lower: Vec<char> = haystack.chars().flat_map(|c| c.to_lowercase()).collect();
+    let needle_lower: Vec<char> = needle.chars().flat_map(|c| c.to_lowercase()).collect();
+
+    let mut positions = Vec::with_capacity(needle_lower.len());
+    let mut hay_idx = 0;
+    for nc in &needle_lower {
+        let mut found = false;
+        while hay_idx < haystack_lower.len() {
+            if haystack_lower[hay_idx] == *nc {
+                positions.push(hay_idx);
+                hay_idx += 1;
+                found = true;
+                break;
+            }
+            hay_idx += 1;
+        }
+        if !found {
+            return None;
+        }
+    }
+    Some(positions)
 }
 
 fn copy_to_clipboard(text: &str) -> Result<(), String> {

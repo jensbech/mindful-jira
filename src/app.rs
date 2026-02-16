@@ -41,6 +41,7 @@ pub struct App {
     pub long_note_input: String,
     pub long_note_scroll: usize,
     pub highlighted_keys: std::collections::HashSet<String>,
+    pub muted_keys: std::collections::HashSet<String>,
     pub config: Config,
     pub status_msg: String,
     pub show_all_parents: bool,
@@ -77,6 +78,7 @@ impl App {
         let notes = notes::load_notes();
         let long_notes = notes::load_long_notes();
         let highlighted_keys = notes::load_highlights();
+        let muted_keys = notes::load_muted();
         App {
             rows: Vec::new(),
             all_rows: Vec::new(),
@@ -89,6 +91,7 @@ impl App {
             long_note_input: String::new(),
             long_note_scroll: 0,
             highlighted_keys,
+            muted_keys,
             config,
             status_msg: String::new(),
             show_all_parents: false,
@@ -253,6 +256,16 @@ impl App {
                 self.highlighted_keys.insert(key);
             }
             notes::save_highlights(&self.highlighted_keys);
+        }
+    }
+
+    pub fn toggle_mute(&mut self) {
+        if let Some(row) = self.rows.get(self.selected) {
+            let key = row.issue.key.clone();
+            if !self.muted_keys.remove(&key) {
+                self.muted_keys.insert(key);
+            }
+            notes::save_muted(&self.muted_keys);
         }
     }
 

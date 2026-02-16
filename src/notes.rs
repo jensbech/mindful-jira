@@ -58,3 +58,21 @@ pub fn save_highlights(keys: &std::collections::HashSet<String>) {
         let _ = fs::write(highlight_path(), json);
     }
 }
+
+fn muted_path() -> std::path::PathBuf {
+    config::config_dir().join("muted.json")
+}
+
+pub fn load_muted() -> std::collections::HashSet<String> {
+    let contents = match fs::read_to_string(muted_path()) {
+        Ok(c) => c,
+        Err(_) => return std::collections::HashSet::new(),
+    };
+    serde_json::from_str(&contents).unwrap_or_default()
+}
+
+pub fn save_muted(keys: &std::collections::HashSet<String>) {
+    if let Ok(json) = serde_json::to_string(keys) {
+        let _ = fs::write(muted_path(), json);
+    }
+}

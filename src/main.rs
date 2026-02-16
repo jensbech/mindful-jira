@@ -160,6 +160,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::Char('s') => app.start_editing_status(),
                             KeyCode::Char('n') => app.start_editing_long_note(),
                             KeyCode::Char('h') => app.toggle_highlight(),
+                            KeyCode::Char('m') => app.toggle_mute(),
                             KeyCode::Char('f') => app.open_filter_editor(),
                             KeyCode::Char('/') => app.start_search(),
                             KeyCode::Char('p') => app.toggle_show_all_parents().await,

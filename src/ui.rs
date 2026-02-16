@@ -314,7 +314,8 @@ fn draw_table(f: &mut Frame, app: &App, area: Rect) {
             let reporter_text = truncate(&issue.reporter, reporter_chars);
             let status_text = truncate(&issue.status, status_chars);
 
-            let base_fg = if is_parent { DIM } else { Color::White };
+            let is_muted = app.muted_keys.contains(&issue.key);
+            let base_fg = if is_parent || is_muted { DIM } else { Color::White };
             let base_style = Style::default().fg(base_fg);
 
             let is_highlighted = app.highlighted_keys.contains(&issue.key);
@@ -327,12 +328,12 @@ fn draw_table(f: &mut Frame, app: &App, area: Rect) {
             };
             let row_style = base_style.bg(bg);
 
-            let p_style = if is_parent {
+            let p_style = if is_parent || is_muted {
                 Style::default().fg(DIM).bg(bg)
             } else {
                 priority_style(&issue.priority).bg(bg)
             };
-            let s_style = if is_parent {
+            let s_style = if is_parent || is_muted {
                 Style::default().fg(DIM).bg(bg)
             } else {
                 status_style(&issue.status).bg(bg)
@@ -340,7 +341,7 @@ fn draw_table(f: &mut Frame, app: &App, area: Rect) {
 
             let note_style = Style::default().fg(Color::Rgb(140, 200, 255)).bg(bg);
 
-            let ic = icon_color;
+            let ic = if is_muted { DIM } else { icon_color };
             let key_summary_text = truncate(&key_summary, work_chars.saturating_sub(prefix_len));
 
             // Build Work cell with optional fuzzy match highlighting
@@ -388,7 +389,7 @@ fn draw_table(f: &mut Frame, app: &App, area: Rect) {
             let work_cell = Cell::from(Line::from(work_spans));
             let mut cells = vec![work_cell];
             if show_assignee {
-                let assignee_style = if is_parent {
+                let assignee_style = if is_parent || is_muted {
                     Style::default().fg(DIM)
                 } else {
                     Style::default().fg(Color::DarkGray)
@@ -1544,7 +1545,7 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
                     .fg(Color::White),
             ),
             format!(
-                " q:Quit  j/k:Nav  Enter:Open  w:Browser  s:Status  n:Notes  h:Highlight  f:Filter  /:Search  {tree_label}  r:Refresh  ?:Legend "
+                " q:Quit  j/k:Nav  Enter:Open  w:Browser  s:Status  n:Notes  h:Highlight  m:Mute  f:Filter  /:Search  {tree_label}  r:Refresh  ?:Legend "
             ),
         ),
         Mode::Searching => (

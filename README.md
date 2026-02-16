@@ -1,6 +1,10 @@
-# Mindful Jira
+<p align="center">
+  <img src="logo.svg" alt="Mindful Jira" width="120" />
+</p>
 
-A terminal UI for viewing and managing your Jira issues, built with Rust and [ratatui](https://github.com/ratatui/ratatui).
+<h1 align="center">Mindful Jira</h1>
+
+<p align="center">A terminal UI for viewing and managing your Jira issues, built with Rust and <a href="https://github.com/ratatui/ratatui">ratatui</a>.</p>
 
 ## Install
 

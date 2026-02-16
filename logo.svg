@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <!-- Ensō (zen circle) - represents mindfulness -->
+  <path d="M100 20
+    C 145 20, 180 55, 180 100
+    C 180 145, 145 180, 100 180
+    C 55 180, 20 145, 20 100
+    C 20 60, 48 28, 85 22"
+    fill="none"
+    stroke="#4A90D9"
+    stroke-width="8"
+    stroke-linecap="round"
+  />
+  <!-- Checkmark - represents resolved tasks / signal over noise -->
+  <polyline
+    points="70,105 90,125 130,80"
+    fill="none"
+    stroke="#4A90D9"
+    stroke-width="8"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+</svg>

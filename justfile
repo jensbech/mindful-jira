@@ -97,8 +97,7 @@ _publish:
             --repo jensbech/mindful-jira \
             --title "$TAG" \
             --notes "Release ${VERSION}" \
-            --latest \
-            --draft=false
+            --latest
     fi
     echo "Done: https://github.com/jensbech/mindful-jira/releases/tag/${TAG}"
 

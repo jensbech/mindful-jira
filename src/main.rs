@@ -152,6 +152,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         if !app.status_msg.is_empty() && app.status_set_at.elapsed() > Duration::from_secs(5) {
             app.status_msg.clear();
         }
+        if !app.detail_status_msg.is_empty()
+            && app.detail_status_set_at.elapsed() > Duration::from_secs(5)
+        {
+            app.detail_status_msg.clear();
+        }
 
         if event::poll(Duration::from_millis(100))? {
             match event::read()? {
@@ -203,6 +208,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::Char('n') => app.detail_next_comment(),
                             KeyCode::Char('p') => app.detail_prev_comment(),
                             KeyCode::Char('y') => app.copy_ticket_to_clipboard(),
+                            KeyCode::Char('l') => app.copy_link_to_clipboard(),
                             KeyCode::Char('c') => app.start_adding_comment(),
                             KeyCode::Char('e') => app.start_editing_comment(),
                             KeyCode::Char('x') => app.confirm_delete_comment(),

@@ -11,7 +11,7 @@ use crate::app::{fuzzy_match, App, HighlightColor, Mode, HIGHLIGHT_OPTIONS};
 
 const ZEBRA_DARK: Color = Color::Rgb(30, 30, 40);
 const HIGHLIGHT_BG: Color = Color::Rgb(55, 55, 80);
-const HIGHLIGHT_YELLOW_BG: Color = Color::Rgb(50, 50, 20);
+const HIGHLIGHT_ORANGE_BG: Color = Color::Rgb(80, 45, 10);
 const HIGHLIGHT_GREEN_BG: Color = Color::Rgb(20, 50, 20);
 const DIM: Color = Color::Rgb(100, 100, 110);
 const ACCENT: Color = Color::Rgb(180, 180, 255);
@@ -327,7 +327,7 @@ fn draw_table(f: &mut Frame, app: &App, area: Rect) {
             let highlight_color = app.highlighted_keys.get(&issue.key).and_then(|s| HighlightColor::from_str(s));
             let bg = if let Some(color) = highlight_color {
                 match color {
-                    HighlightColor::Yellow => HIGHLIGHT_YELLOW_BG,
+                    HighlightColor::Orange => HIGHLIGHT_ORANGE_BG,
                     HighlightColor::Green => HIGHLIGHT_GREEN_BG,
                 }
             } else if i % 2 == 1 {
@@ -561,7 +561,7 @@ fn draw_highlight_picker_modal(f: &mut Frame, app: &App) {
         let marker = if i == app.highlight_selected { "▶ " } else { "  " };
         let is_active = current.map(|c| c.as_str() == opt.as_str()).unwrap_or(false);
         let dot_color = match opt {
-            HighlightColor::Yellow => Color::Yellow,
+            HighlightColor::Orange => Color::Rgb(255, 180, 50),
             HighlightColor::Green => Color::Green,
         };
         let label = if is_active {
@@ -831,7 +831,7 @@ fn draw_detail_modal(f: &mut Frame, app: &App) {
     } else if picking_transition {
         (app.transitions.len() as u16 + 3).min(inner.height / 2)
     } else {
-        1
+        1 + if !app.detail_status_msg.is_empty() { 1 } else { 0 }
     };
 
     let content_height = inner.height.saturating_sub(bottom_reserve);
@@ -1173,8 +1173,21 @@ fn draw_detail_modal(f: &mut Frame, app: &App) {
             Style::default().fg(Color::Rgb(100, 100, 120)),
         )));
     } else {
+        if !app.detail_status_msg.is_empty() {
+            let elapsed_ms = app.detail_status_set_at.elapsed().as_millis();
+            let is_error = app.detail_status_msg.starts_with("Error");
+            let fg = if is_error {
+                Color::Rgb(220, 140, 140)
+            } else {
+                rainbow_color(elapsed_ms, 0.6, 0.7)
+            };
+            bottom_lines.push(Line::from(Span::styled(
+                app.detail_status_msg.clone(),
+                Style::default().fg(fg),
+            )));
+        }
         bottom_lines.push(Line::from(Span::styled(
-            "↑↓:Scroll  n/p:Comment  y:Copy  c:Add  e:Edit  x:Del  s:Summary  t:Transition  Enter:Browser  Esc:Close",
+            "↑↓:Scroll  n/p:Comment  y:Copy contents  l:Copy issue link  c:Add  e:Edit  x:Del  s:Summary  t:Transition  Enter:Browser  Esc:Close",
             Style::default().fg(Color::Rgb(100, 100, 120)),
         )));
     }
@@ -1855,7 +1868,7 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
             Span::styled(
                 " HIGHLIGHT ",
                 Style::default()
-                    .bg(Color::Yellow)
+                    .bg(Color::Rgb(230, 150, 30))
                     .fg(Color::Black)
                     .add_modifier(Modifier::BOLD),
             ),

@@ -23,21 +23,21 @@ pub struct ResolvedMention {
 
 #[derive(PartialEq, Clone, Copy)]
 pub enum HighlightColor {
-    Yellow,
+    Orange,
     Green,
 }
 
 impl HighlightColor {
     pub fn as_str(&self) -> &'static str {
         match self {
-            HighlightColor::Yellow => "yellow",
+            HighlightColor::Orange => "orange",
             HighlightColor::Green => "green",
         }
     }
 
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
-            "yellow" => Some(HighlightColor::Yellow),
+            "orange" => Some(HighlightColor::Orange),
             "green" => Some(HighlightColor::Green),
             _ => None,
         }
@@ -45,14 +45,14 @@ impl HighlightColor {
 
     pub fn label(&self) -> &'static str {
         match self {
-            HighlightColor::Yellow => "Doing now",
+            HighlightColor::Orange => "Doing now",
             HighlightColor::Green => "Ready for review",
         }
     }
 }
 
 pub const HIGHLIGHT_OPTIONS: [HighlightColor; 2] = [
-    HighlightColor::Yellow,
+    HighlightColor::Orange,
     HighlightColor::Green,
 ];
 
@@ -132,6 +132,9 @@ pub struct App {
     pub highlight_selected: usize,
     // Summary editing
     pub summary_input: String,
+    // Detail-modal status (visible inside the modal)
+    pub detail_status_msg: String,
+    pub detail_status_set_at: Instant,
 }
 
 impl App {
@@ -178,12 +181,19 @@ impl App {
             resolved_mentions: Vec::new(),
             highlight_selected: 0,
             summary_input: String::new(),
+            detail_status_msg: String::new(),
+            detail_status_set_at: Instant::now(),
         }
     }
 
     pub fn set_status(&mut self, msg: impl Into<String>) {
         self.status_msg = msg.into();
         self.status_set_at = Instant::now();
+    }
+
+    pub fn set_detail_status(&mut self, msg: impl Into<String>) {
+        self.detail_status_msg = msg.into();
+        self.detail_status_set_at = Instant::now();
     }
 
     pub async fn init(&mut self) {
@@ -323,7 +333,7 @@ impl App {
     pub fn copy_key_to_clipboard(&mut self) {
         if let Some(row) = self.rows.get(self.selected) {
             match copy_to_clipboard(&row.issue.key) {
-                Ok(()) => self.set_status(format!("Copied {}", row.issue.key)),
+                Ok(()) => self.set_status(format!("Copied ticket key '{}' to clipboard", row.issue.key)),
                 Err(e) => self.set_status(format!("Copy failed: {e}")),
             }
         }
@@ -336,7 +346,7 @@ impl App {
         // Pre-select current highlight if one exists
         let key = &self.rows[self.selected].issue.key;
         self.highlight_selected = match self.highlighted_keys.get(key).and_then(|s| HighlightColor::from_str(s)) {
-            Some(HighlightColor::Yellow) => 0,
+            Some(HighlightColor::Orange) => 0,
             Some(HighlightColor::Green) => 1,
             None => 0,
         };
@@ -453,6 +463,7 @@ impl App {
                 self.detail_scroll = 0;
                 self.mode = Mode::TicketDetail;
                 self.status_msg.clear();
+                self.detail_status_msg.clear();
             }
             Err(e) => {
                 self.set_status(format!("Error: {e}"));
@@ -464,6 +475,7 @@ impl App {
         self.detail = None;
         self.detail_scroll = 0;
         self.detail_comment_selected = None;
+        self.detail_status_msg.clear();
         self.mode = Mode::Normal;
     }
 
@@ -475,6 +487,20 @@ impl App {
         let total = self.detail_lines.get();
         if (self.detail_scroll as usize) + 1 < total {
             self.detail_scroll += 1;
+        }
+    }
+
+    pub fn copy_link_to_clipboard(&mut self) {
+        if let Some(ref detail) = self.detail {
+            let url = format!(
+                "{}/browse/{}",
+                self.config.jira_url.trim_end_matches('/'),
+                detail.key
+            );
+            match copy_to_clipboard(&url) {
+                Ok(()) => self.set_detail_status("Issue link copied to clipboard"),
+                Err(e) => self.set_detail_status(format!("Copy failed: {e}")),
+            }
         }
     }
 
@@ -562,8 +588,8 @@ impl App {
             }
         }
         match copy_to_clipboard(&text) {
-            Ok(()) => self.set_status("Ticket copied to clipboard"),
-            Err(e) => self.set_status(format!("Copy failed: {e}")),
+            Ok(()) => self.set_detail_status("Ticket contents copied to clipboard"),
+            Err(e) => self.set_detail_status(format!("Copy failed: {e}")),
         }
     }
 
@@ -589,7 +615,7 @@ impl App {
             None => return,
         };
         if comment.author_account_id != self.current_account_id {
-            self.set_status("Can only edit your own comments");
+            self.set_detail_status("Can only edit your own comments");
             return;
         }
         self.comment_input = comment.body.clone();
@@ -608,7 +634,7 @@ impl App {
         if let Some(detail) = &self.detail {
             if let Some(comment) = detail.comments.get(idx) {
                 if comment.author_account_id != self.current_account_id {
-                    self.set_status("Can only delete your own comments");
+                    self.set_detail_status("Can only delete your own comments");
                     return;
                 }
             }
@@ -635,10 +661,10 @@ impl App {
             None => return,
         };
         let mentions = self.build_mention_inserts();
-        self.set_status("Adding comment...");
+        self.set_detail_status("Adding comment...");
         match jira::add_comment(&self.config, &key, &text, &mentions).await {
             Ok(()) => {
-                self.set_status("Comment added");
+                self.set_detail_status("Comment added");
                 self.comment_input.clear();
                 self.mention = None;
                 self.resolved_mentions.clear();
@@ -646,7 +672,7 @@ impl App {
                 self.refresh_detail(&key).await;
             }
             Err(e) => {
-                self.set_status(format!("Error: {e}"));
+                self.set_detail_status(format!("Error: {e}"));
                 self.mode = Mode::TicketDetail;
             }
         }
@@ -667,10 +693,10 @@ impl App {
             None => return,
         };
         let mentions = self.build_mention_inserts();
-        self.set_status("Updating comment...");
+        self.set_detail_status("Updating comment...");
         match jira::update_comment(&self.config, &key, &comment_id, &text, &mentions).await {
             Ok(()) => {
-                self.set_status("Comment updated");
+                self.set_detail_status("Comment updated");
                 self.comment_input.clear();
                 self.editing_comment_id = None;
                 self.mention = None;
@@ -679,7 +705,7 @@ impl App {
                 self.refresh_detail(&key).await;
             }
             Err(e) => {
-                self.set_status(format!("Error: {e}"));
+                self.set_detail_status(format!("Error: {e}"));
                 self.mode = Mode::TicketDetail;
             }
         }
@@ -700,16 +726,16 @@ impl App {
         };
         let key = detail.key.clone();
         let comment_id = comment.id.clone();
-        self.set_status("Deleting comment...");
+        self.set_detail_status("Deleting comment...");
         match jira::delete_comment(&self.config, &key, &comment_id).await {
             Ok(()) => {
-                self.set_status("Comment deleted");
+                self.set_detail_status("Comment deleted");
                 self.detail_comment_selected = None;
                 self.mode = Mode::TicketDetail;
                 self.refresh_detail(&key).await;
             }
             Err(e) => {
-                self.set_status(format!("Error: {e}"));
+                self.set_detail_status(format!("Error: {e}"));
                 self.mode = Mode::TicketDetail;
             }
         }
@@ -721,7 +747,7 @@ impl App {
                 self.detail = Some(detail);
             }
             Err(e) => {
-                self.set_status(format!("Error refreshing: {e}"));
+                self.set_detail_status(format!("Error refreshing: {e}"));
             }
         }
     }
@@ -887,20 +913,20 @@ impl App {
             Some(d) => d.key.clone(),
             None => return,
         };
-        self.set_status("Loading transitions...");
+        self.set_detail_status("Loading transitions...");
         match jira::fetch_transitions(&self.config, &key).await {
             Ok(transitions) => {
                 if transitions.is_empty() {
-                    self.set_status("No transitions available");
+                    self.set_detail_status("No transitions available");
                     return;
                 }
                 self.transitions = transitions;
                 self.transition_selected = 0;
                 self.mode = Mode::DetailTransition;
-                self.status_msg.clear();
+                self.detail_status_msg.clear();
             }
             Err(e) => {
-                self.set_status(format!("Error: {e}"));
+                self.set_detail_status(format!("Error: {e}"));
             }
         }
     }
@@ -945,17 +971,17 @@ impl App {
         };
         let name = transition.name.clone();
         let id = transition.id.clone();
-        self.set_status(format!("Transitioning to {name}..."));
+        self.set_detail_status(format!("Transitioning to {name}..."));
         match jira::do_transition(&self.config, &key, &id).await {
             Ok(()) => {
                 self.transitions.clear();
                 self.mode = Mode::TicketDetail;
                 self.refresh().await;
                 self.refresh_detail(&key).await;
-                self.set_status(format!("Transitioned to {name}"));
+                self.set_detail_status(format!("Transitioned to {name}"));
             }
             Err(e) => {
-                self.set_status(format!("Error: {e}"));
+                self.set_detail_status(format!("Error: {e}"));
                 self.transitions.clear();
                 self.mode = Mode::TicketDetail;
             }
@@ -970,7 +996,7 @@ impl App {
             None => return,
         };
         if detail.reporter_account_id != self.current_account_id {
-            self.set_status("Can only edit summaries of tickets you reported");
+            self.set_detail_status("Can only edit summaries of tickets you reported");
             return;
         }
         self.summary_input = detail.summary.clone();
@@ -993,17 +1019,17 @@ impl App {
             Some(d) => d.key.clone(),
             None => return,
         };
-        self.set_status("Updating summary...");
+        self.set_detail_status("Updating summary...");
         match jira::update_summary(&self.config, &key, &text).await {
             Ok(()) => {
-                self.set_status("Summary updated");
+                self.set_detail_status("Summary updated");
                 self.summary_input.clear();
                 self.mode = Mode::TicketDetail;
                 self.refresh().await;
                 self.refresh_detail(&key).await;
             }
             Err(e) => {
-                self.set_status(format!("Error: {e}"));
+                self.set_detail_status(format!("Error: {e}"));
                 self.mode = Mode::TicketDetail;
             }
         }

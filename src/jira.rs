@@ -497,6 +497,42 @@ fn format_date(iso: &str) -> String {
 
 // --- Comment CRUD ---
 
+/// Split a plain text segment into text nodes and inlineCard nodes for any URLs found.
+fn text_to_adf_nodes(segment: &str) -> Vec<serde_json::Value> {
+    let mut nodes: Vec<serde_json::Value> = Vec::new();
+    let mut remaining = segment;
+
+    while !remaining.is_empty() {
+        let url_start = remaining
+            .find("https://")
+            .or_else(|| remaining.find("http://"));
+
+        match url_start {
+            Some(start) => {
+                if start > 0 {
+                    nodes.push(serde_json::json!({ "type": "text", "text": &remaining[..start] }));
+                }
+                let url_part = &remaining[start..];
+                let url_end = url_part
+                    .find(|c: char| c.is_whitespace())
+                    .unwrap_or(url_part.len());
+                let url = &url_part[..url_end];
+                nodes.push(serde_json::json!({
+                    "type": "inlineCard",
+                    "attrs": { "url": url }
+                }));
+                remaining = &url_part[url_end..];
+            }
+            None => {
+                nodes.push(serde_json::json!({ "type": "text", "text": remaining }));
+                break;
+            }
+        }
+    }
+
+    nodes
+}
+
 fn text_to_adf(text: &str, mentions: &[MentionInsert]) -> serde_json::Value {
     // Build a sorted list of mentions by start position
     let mut sorted_mentions: Vec<&MentionInsert> = mentions.iter().collect();
@@ -518,7 +554,7 @@ fn text_to_adf(text: &str, mentions: &[MentionInsert]) -> serde_json::Value {
                 .collect();
 
             let content = if line_mentions.is_empty() {
-                vec![serde_json::json!({ "type": "text", "text": line })]
+                text_to_adf_nodes(line)
             } else {
                 let mut nodes: Vec<serde_json::Value> = Vec::new();
                 let mut pos = line_start;
@@ -526,7 +562,7 @@ fn text_to_adf(text: &str, mentions: &[MentionInsert]) -> serde_json::Value {
                     if mention.start > pos {
                         let segment: String = chars[pos..mention.start].iter().collect();
                         if !segment.is_empty() {
-                            nodes.push(serde_json::json!({ "type": "text", "text": segment }));
+                            nodes.extend(text_to_adf_nodes(&segment));
                         }
                     }
                     nodes.push(serde_json::json!({
@@ -542,7 +578,7 @@ fn text_to_adf(text: &str, mentions: &[MentionInsert]) -> serde_json::Value {
                 if pos < line_end {
                     let segment: String = chars[pos..line_end].iter().collect();
                     if !segment.is_empty() {
-                        nodes.push(serde_json::json!({ "type": "text", "text": segment }));
+                        nodes.extend(text_to_adf_nodes(&segment));
                     }
                 }
                 if nodes.is_empty() {

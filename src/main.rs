@@ -207,6 +207,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::Char('e') => app.start_editing_comment(),
                             KeyCode::Char('x') => app.confirm_delete_comment(),
                             KeyCode::Char('t') => app.open_transition_picker().await,
+                            KeyCode::Char('s') => app.start_editing_summary(),
                             KeyCode::Char('?') => app.show_legend = !app.show_legend,
                             _ => {}
                         },
@@ -327,6 +328,44 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         Mode::DetailConfirmDelete => match key.code {
                             KeyCode::Char('y') => app.execute_delete_comment().await,
                             KeyCode::Char('n') | KeyCode::Esc => app.cancel_comment_action(),
+                            _ => {}
+                        },
+                        Mode::DetailEditingSummary => match key.code {
+                            KeyCode::Enter => app.save_summary().await,
+                            KeyCode::Esc => app.cancel_editing_summary(),
+                            KeyCode::Left => {
+                                if app.cursor_pos > 0 {
+                                    app.cursor_pos -= 1;
+                                }
+                            }
+                            KeyCode::Right => {
+                                if app.cursor_pos < app.summary_input.chars().count() {
+                                    app.cursor_pos += 1;
+                                }
+                            }
+                            KeyCode::Home => app.cursor_pos = 0,
+                            KeyCode::End => {
+                                app.cursor_pos = app.summary_input.chars().count()
+                            }
+                            KeyCode::Backspace => {
+                                input_backspace(
+                                    &mut app.summary_input,
+                                    &mut app.cursor_pos,
+                                );
+                            }
+                            KeyCode::Delete => {
+                                input_delete(
+                                    &mut app.summary_input,
+                                    &mut app.cursor_pos,
+                                );
+                            }
+                            KeyCode::Char(c) => {
+                                input_insert(
+                                    &mut app.summary_input,
+                                    &mut app.cursor_pos,
+                                    c,
+                                );
+                            }
                             _ => {}
                         },
                         Mode::EditingLongNote => {
@@ -494,7 +533,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         | Mode::DetailEditingComment
                         | Mode::DetailConfirmDelete
                         | Mode::DetailTransition
-                        | Mode::DetailConfirmTransition => app.detail_scroll_up(),
+                        | Mode::DetailConfirmTransition
+                        | Mode::DetailEditingSummary => app.detail_scroll_up(),
                         Mode::Normal | Mode::Searching => app.move_up(),
                         _ => {}
                     },
@@ -504,7 +544,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         | Mode::DetailEditingComment
                         | Mode::DetailConfirmDelete
                         | Mode::DetailTransition
-                        | Mode::DetailConfirmTransition => app.detail_scroll_down(),
+                        | Mode::DetailConfirmTransition
+                        | Mode::DetailEditingSummary => app.detail_scroll_down(),
                         Mode::Normal | Mode::Searching => app.move_down(),
                         _ => {}
                     },

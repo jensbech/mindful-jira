@@ -71,6 +71,7 @@ pub enum Mode {
     DetailConfirmDelete,
     DetailTransition,
     DetailConfirmTransition,
+    DetailEditingSummary,
     HighlightPicker,
 }
 
@@ -129,6 +130,8 @@ pub struct App {
     pub resolved_mentions: Vec<ResolvedMention>,
     // Highlight picker state
     pub highlight_selected: usize,
+    // Summary editing
+    pub summary_input: String,
 }
 
 impl App {
@@ -174,6 +177,7 @@ impl App {
             mention: None,
             resolved_mentions: Vec::new(),
             highlight_selected: 0,
+            summary_input: String::new(),
         }
     }
 
@@ -953,6 +957,53 @@ impl App {
             Err(e) => {
                 self.set_status(format!("Error: {e}"));
                 self.transitions.clear();
+                self.mode = Mode::TicketDetail;
+            }
+        }
+    }
+
+    // --- Summary editing ---
+
+    pub fn start_editing_summary(&mut self) {
+        let detail = match &self.detail {
+            Some(d) => d,
+            None => return,
+        };
+        if detail.reporter_account_id != self.current_account_id {
+            self.set_status("Can only edit summaries of tickets you reported");
+            return;
+        }
+        self.summary_input = detail.summary.clone();
+        self.cursor_pos = self.summary_input.chars().count();
+        self.mode = Mode::DetailEditingSummary;
+    }
+
+    pub fn cancel_editing_summary(&mut self) {
+        self.summary_input.clear();
+        self.mode = Mode::TicketDetail;
+    }
+
+    pub async fn save_summary(&mut self) {
+        let text = self.summary_input.trim().to_string();
+        if text.is_empty() {
+            self.cancel_editing_summary();
+            return;
+        }
+        let key = match &self.detail {
+            Some(d) => d.key.clone(),
+            None => return,
+        };
+        self.set_status("Updating summary...");
+        match jira::update_summary(&self.config, &key, &text).await {
+            Ok(()) => {
+                self.set_status("Summary updated");
+                self.summary_input.clear();
+                self.mode = Mode::TicketDetail;
+                self.refresh().await;
+                self.refresh_detail(&key).await;
+            }
+            Err(e) => {
+                self.set_status(format!("Error: {e}"));
                 self.mode = Mode::TicketDetail;
             }
         }

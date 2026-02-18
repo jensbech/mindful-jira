@@ -40,6 +40,7 @@ pub struct IssueDetail {
     pub summary: String,
     pub description: String,
     pub comments: Vec<Comment>,
+    pub reporter_account_id: String,
 }
 
 pub struct Comment {
@@ -284,7 +285,7 @@ pub async fn fetch_issue_detail(
     let resp = client
         .get(&url)
         .basic_auth(&config.email, Some(&config.api_token))
-        .query(&[("fields", "summary,description,comment,issuetype,status")])
+        .query(&[("fields", "summary,description,comment,issuetype,status,reporter")])
         .send()
         .await
         .map_err(|e| format!("HTTP request failed: {e}"))?;
@@ -357,6 +358,11 @@ pub async fn fetch_issue_detail(
         .unwrap_or("")
         .to_string();
 
+    let reporter_account_id = fields["reporter"]["accountId"]
+        .as_str()
+        .unwrap_or("")
+        .to_string();
+
     Ok(IssueDetail {
         key: key.to_string(),
         issue_type,
@@ -364,6 +370,7 @@ pub async fn fetch_issue_detail(
         summary,
         description,
         comments,
+        reporter_account_id,
     })
 }
 
@@ -687,6 +694,39 @@ pub async fn delete_comment(
     let resp = client
         .delete(&url)
         .basic_auth(&config.email, Some(&config.api_token))
+        .send()
+        .await
+        .map_err(|e| format!("HTTP request failed: {e}"))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("Jira API error {status}: {body}"));
+    }
+
+    Ok(())
+}
+
+pub async fn update_summary(
+    config: &Config,
+    issue_key: &str,
+    summary: &str,
+) -> Result<(), String> {
+    let url = format!(
+        "{}/rest/api/3/issue/{}",
+        config.jira_url.trim_end_matches('/'),
+        issue_key
+    );
+
+    let payload = serde_json::json!({
+        "fields": { "summary": summary }
+    });
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .put(&url)
+        .basic_auth(&config.email, Some(&config.api_token))
+        .json(&payload)
         .send()
         .await
         .map_err(|e| format!("HTTP request failed: {e}"))?;

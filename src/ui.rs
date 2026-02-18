@@ -111,7 +111,8 @@ pub fn draw(f: &mut Frame, app: &App) {
         | Mode::DetailAddingComment
         | Mode::DetailEditingComment
         | Mode::DetailConfirmDelete
-        | Mode::DetailTransition => {
+        | Mode::DetailTransition
+        | Mode::DetailEditingSummary => {
             dim_background(f);
             draw_detail_modal(f, app);
         }
@@ -810,6 +811,7 @@ fn draw_detail_modal(f: &mut Frame, app: &App) {
 
     let input_editing =
         app.mode == Mode::DetailAddingComment || app.mode == Mode::DetailEditingComment;
+    let editing_summary = app.mode == Mode::DetailEditingSummary;
     let confirm_deleting = app.mode == Mode::DetailConfirmDelete;
     let picking_transition = app.mode == Mode::DetailTransition;
     let mention_count = app
@@ -822,8 +824,8 @@ fn draw_detail_modal(f: &mut Frame, app: &App) {
     } else {
         0
     };
-    let bottom_reserve: u16 = if input_editing {
-        4 + mention_rows
+    let bottom_reserve: u16 = if input_editing || editing_summary {
+        4 + if input_editing { mention_rows } else { 0 }
     } else if confirm_deleting {
         2
     } else if picking_transition {
@@ -1065,6 +1067,38 @@ fn draw_detail_modal(f: &mut Frame, app: &App) {
             help_text,
             Style::default().fg(Color::Rgb(100, 100, 120)),
         )));
+    } else if editing_summary {
+        let label = "Edit summary";
+
+        bottom_lines.push(Line::from(Span::styled(
+            format!(
+                "┌─ {label} {}",
+                "─".repeat(inner_w.saturating_sub(label.len() + 4))
+            ),
+            Style::default().fg(Color::Rgb(100, 100, 140)),
+        )));
+
+        bottom_lines.push(Line::from(Span::styled(
+            format!(
+                "\u{2502} {}",
+                visible_input(
+                    &app.summary_input,
+                    app.cursor_pos,
+                    inner_w.saturating_sub(2),
+                )
+            ),
+            Style::default().fg(Color::White),
+        )));
+
+        bottom_lines.push(Line::from(Span::styled(
+            format!("└{}", "─".repeat(inner_w.saturating_sub(1))),
+            Style::default().fg(Color::Rgb(100, 100, 140)),
+        )));
+
+        bottom_lines.push(Line::from(Span::styled(
+            "Enter:Save  Esc:Cancel",
+            Style::default().fg(Color::Rgb(100, 100, 120)),
+        )));
     } else if confirm_deleting {
         let idx = app.detail_comment_selected.unwrap_or(0);
         let author = detail
@@ -1140,7 +1174,7 @@ fn draw_detail_modal(f: &mut Frame, app: &App) {
         )));
     } else {
         bottom_lines.push(Line::from(Span::styled(
-            "↑↓:Scroll  n/p:Comment  y:Copy  c:Add  e:Edit  x:Del  t:Transition  Enter:Browser  Esc:Close",
+            "↑↓:Scroll  n/p:Comment  y:Copy  c:Add  e:Edit  x:Del  s:Summary  t:Transition  Enter:Browser  Esc:Close",
             Style::default().fg(Color::Rgb(100, 100, 120)),
         )));
     }
@@ -1806,6 +1840,16 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
                     .add_modifier(Modifier::BOLD),
             ),
             " y/Enter:Confirm  n/Esc:Cancel ".to_string(),
+        ),
+        Mode::DetailEditingSummary => (
+            Span::styled(
+                " EDIT SUMMARY ",
+                Style::default()
+                    .bg(Color::Rgb(180, 130, 50))
+                    .fg(Color::Black)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            " Enter:Save  Esc:Cancel ".to_string(),
         ),
         Mode::HighlightPicker => (
             Span::styled(

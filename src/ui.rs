@@ -7,7 +7,7 @@ use ratatui::widgets::{
 };
 use ratatui::Frame;
 
-use crate::app::{fuzzy_match, App, HighlightColor, Mode, HIGHLIGHT_OPTIONS};
+use crate::app::{fuzzy_match, App, HighlightColor, Mode, SortCriteria, HIGHLIGHT_OPTIONS};
 
 const ZEBRA_DARK: Color = Color::Rgb(30, 30, 40);
 const HIGHLIGHT_BG: Color = Color::Rgb(55, 55, 80);
@@ -128,6 +128,10 @@ pub fn draw(f: &mut Frame, app: &App) {
         Mode::HighlightPicker => {
             dim_background(f);
             draw_highlight_picker_modal(f, app);
+        }
+        Mode::SortPicker => {
+            dim_background(f);
+            draw_sort_picker_modal(f, app);
         }
         _ => {}
     }
@@ -585,6 +589,60 @@ fn draw_highlight_picker_modal(f: &mut Frame, app: &App) {
             Span::styled(marker, Style::default().fg(fg)),
             Span::styled("✕ ", Style::default().fg(Color::Rgb(200, 80, 80))),
             Span::styled("Remove highlight", Style::default().fg(fg)),
+        ]));
+    }
+
+    lines.push(Line::from(Span::styled(
+        " Enter:Select  Esc:Cancel",
+        Style::default().fg(Color::Rgb(100, 100, 120)),
+    )));
+
+    f.render_widget(Paragraph::new(lines), inner);
+}
+
+// ── Sort picker modal ────────────────────────────────────────
+
+fn draw_sort_picker_modal(f: &mut Frame, app: &App) {
+    let options = SortCriteria::ALL;
+    let height = (options.len() as u16) + 4; // border + options + hint
+
+    let area = f.area();
+    let width = 40u16.min(area.width.saturating_sub(4));
+    let x = (area.width.saturating_sub(width)) / 2;
+    let y = (area.height.saturating_sub(height)) / 2;
+    let modal_area = Rect::new(x, y, width, height);
+
+    f.render_widget(Clear, modal_area);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(ACCENT))
+        .title(Span::styled(
+            " Sort ",
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ));
+
+    let inner = block.inner(modal_area);
+    f.render_widget(block, modal_area);
+
+    let mut lines: Vec<Line> = Vec::new();
+
+    for (i, opt) in options.iter().enumerate() {
+        let marker = if i == app.sort_selected { "▶ " } else { "  " };
+        let is_active = *opt == app.sort_criteria;
+        let label = if is_active {
+            format!("{} (active)", opt.label())
+        } else {
+            opt.label().to_string()
+        };
+        let fg = if i == app.sort_selected {
+            Color::White
+        } else {
+            Color::Rgb(180, 180, 180)
+        };
+        lines.push(Line::from(vec![
+            Span::styled(marker, Style::default().fg(fg)),
+            Span::styled(label, Style::default().fg(fg)),
         ]));
     }
 
@@ -1740,7 +1798,7 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
                     .fg(Color::White),
             ),
             format!(
-                " q:Quit  j/k:Nav  Enter:Open  w:Browser  s:Status  n:Notes  h:Highlight  m:Mute  y:Copy  f:Filter  /:Search  {tree_label}  r:Refresh  ?:Legend "
+                " q:Quit  j/k:Nav  Enter:Open  w:Browser  s:Status  n:Notes  h:Highlight  m:Mute  o:Sort  y:Copy  f:Filter  /:Search  {tree_label}  r:Refresh  ?:Legend "
             ),
         ),
         Mode::Searching => (
@@ -1869,6 +1927,16 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
                 " HIGHLIGHT ",
                 Style::default()
                     .bg(Color::Rgb(230, 150, 30))
+                    .fg(Color::Black)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            " ↑↓:Navigate  Enter:Select  Esc:Cancel ".to_string(),
+        ),
+        Mode::SortPicker => (
+            Span::styled(
+                " SORT ",
+                Style::default()
+                    .bg(Color::Rgb(100, 160, 200))
                     .fg(Color::Black)
                     .add_modifier(Modifier::BOLD),
             ),

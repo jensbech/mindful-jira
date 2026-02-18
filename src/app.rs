@@ -56,6 +56,67 @@ pub const HIGHLIGHT_OPTIONS: [HighlightColor; 2] = [
     HighlightColor::Green,
 ];
 
+#[derive(PartialEq, Clone, Copy)]
+pub enum SortCriteria {
+    Default,
+    Board,
+    Priority,
+    Muted,
+    Highlight,
+}
+
+impl SortCriteria {
+    pub const ALL: [SortCriteria; 5] = [
+        SortCriteria::Default,
+        SortCriteria::Board,
+        SortCriteria::Priority,
+        SortCriteria::Muted,
+        SortCriteria::Highlight,
+    ];
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            SortCriteria::Default => "Default (Jira order)",
+            SortCriteria::Board => "Board (project prefix)",
+            SortCriteria::Priority => "Priority",
+            SortCriteria::Muted => "Muted (sink to bottom)",
+            SortCriteria::Highlight => "Highlight (float to top)",
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SortCriteria::Default => "default",
+            SortCriteria::Board => "board",
+            SortCriteria::Priority => "priority",
+            SortCriteria::Muted => "muted",
+            SortCriteria::Highlight => "highlight",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "board" => SortCriteria::Board,
+            "priority" => SortCriteria::Priority,
+            "muted" => SortCriteria::Muted,
+            "highlight" => SortCriteria::Highlight,
+            _ => SortCriteria::Default,
+        }
+    }
+}
+
+fn priority_rank(p: &str) -> u8 {
+    match p {
+        "Blocker" => 6,
+        "Critical" | "Highest" => 5,
+        "Major" | "High" => 4,
+        "Normal" | "Medium" => 3,
+        "Minor" | "Low" => 2,
+        "Trivial" | "Lowest" => 1,
+        _ => 0,
+    }
+}
+
 #[derive(PartialEq)]
 pub enum Mode {
     Normal,
@@ -73,6 +134,7 @@ pub enum Mode {
     DetailConfirmTransition,
     DetailEditingSummary,
     HighlightPicker,
+    SortPicker,
 }
 
 #[derive(Clone)]
@@ -80,6 +142,7 @@ pub struct DisplayRow {
     pub issue: jira::JiraIssue,
     pub depth: u8,
     pub is_context_parent: bool,
+    pub original_index: usize,
 }
 
 pub struct App {
@@ -135,6 +198,9 @@ pub struct App {
     // Detail-modal status (visible inside the modal)
     pub detail_status_msg: String,
     pub detail_status_set_at: Instant,
+    // Sort picker state
+    pub sort_selected: usize,
+    pub sort_criteria: SortCriteria,
 }
 
 impl App {
@@ -143,6 +209,11 @@ impl App {
         let long_notes = notes::load_long_notes();
         let highlighted_keys = notes::load_highlights();
         let muted_keys = notes::load_muted();
+        let sort_criteria = config
+            .sort_order
+            .as_deref()
+            .map(SortCriteria::from_str)
+            .unwrap_or(SortCriteria::Default);
         App {
             rows: Vec::new(),
             all_rows: Vec::new(),
@@ -183,6 +254,8 @@ impl App {
             summary_input: String::new(),
             detail_status_msg: String::new(),
             detail_status_set_at: Instant::now(),
+            sort_selected: 0,
+            sort_criteria,
         }
     }
 
@@ -209,7 +282,8 @@ impl App {
             Ok(issues) => {
                 self.all_rows = issues
                     .into_iter()
-                    .map(|issue| {
+                    .enumerate()
+                    .map(|(i, issue)| {
                         let depth = if issue.is_subtask || issue.parent_key.is_some() {
                             1
                         } else {
@@ -220,11 +294,13 @@ impl App {
                             issue,
                             depth,
                             is_context_parent,
+                            original_index: i,
                         }
                     })
                     .collect();
                 let count = self.all_rows.len();
                 self.set_status(format!("Loaded {count} issues"));
+                self.sort_rows();
                 self.apply_search_filter();
             }
             Err(e) => {
@@ -394,6 +470,83 @@ impl App {
             .get(self.selected)
             .and_then(|row| self.highlighted_keys.get(&row.issue.key))
             .and_then(|s| HighlightColor::from_str(s))
+    }
+
+    // --- Sort picker ---
+
+    pub fn open_sort_picker(&mut self) {
+        self.sort_selected = SortCriteria::ALL
+            .iter()
+            .position(|c| *c == self.sort_criteria)
+            .unwrap_or(0);
+        self.mode = Mode::SortPicker;
+    }
+
+    pub fn sort_picker_up(&mut self) {
+        if self.sort_selected > 0 {
+            self.sort_selected -= 1;
+        }
+    }
+
+    pub fn sort_picker_down(&mut self) {
+        if self.sort_selected < SortCriteria::ALL.len() - 1 {
+            self.sort_selected += 1;
+        }
+    }
+
+    pub fn apply_sort(&mut self) {
+        self.sort_criteria = SortCriteria::ALL[self.sort_selected];
+        self.config.sort_order = Some(self.sort_criteria.as_str().to_string());
+        self.config.save();
+        self.sort_rows();
+        self.apply_search_filter();
+        self.mode = Mode::Normal;
+    }
+
+    pub fn cancel_sort_picker(&mut self) {
+        self.mode = Mode::Normal;
+    }
+
+    pub fn sort_rows(&mut self) {
+        match self.sort_criteria {
+            SortCriteria::Default => {
+                self.all_rows.sort_by_key(|r| r.original_index);
+            }
+            SortCriteria::Board => {
+                self.all_rows.sort_by(|a, b| {
+                    let (a_proj, a_num) = split_key(&a.issue.key);
+                    let (b_proj, b_num) = split_key(&b.issue.key);
+                    a_proj.cmp(&b_proj).then(a_num.cmp(&b_num))
+                });
+            }
+            SortCriteria::Priority => {
+                self.all_rows.sort_by(|a, b| {
+                    priority_rank(&b.issue.priority)
+                        .cmp(&priority_rank(&a.issue.priority))
+                        .then(a.original_index.cmp(&b.original_index))
+                });
+            }
+            SortCriteria::Muted => {
+                let muted = &self.muted_keys;
+                self.all_rows.sort_by(|a, b| {
+                    let a_muted = muted.contains(&a.issue.key);
+                    let b_muted = muted.contains(&b.issue.key);
+                    a_muted
+                        .cmp(&b_muted)
+                        .then(a.original_index.cmp(&b.original_index))
+                });
+            }
+            SortCriteria::Highlight => {
+                let highlights = &self.highlighted_keys;
+                self.all_rows.sort_by(|a, b| {
+                    let a_rank = highlight_rank(highlights.get(&a.issue.key).map(|s| s.as_str()));
+                    let b_rank = highlight_rank(highlights.get(&b.issue.key).map(|s| s.as_str()));
+                    a_rank
+                        .cmp(&b_rank)
+                        .then(a.original_index.cmp(&b.original_index))
+                });
+            }
+        }
     }
 
     pub fn toggle_mute(&mut self) {
@@ -1151,6 +1304,21 @@ pub fn fuzzy_match(haystack: &str, needle: &str) -> Option<Vec<usize>> {
         }
     }
     Some(positions)
+}
+
+fn split_key(key: &str) -> (&str, u64) {
+    match key.rsplit_once('-') {
+        Some((prefix, num)) => (prefix, num.parse().unwrap_or(0)),
+        None => (key, 0),
+    }
+}
+
+fn highlight_rank(color: Option<&str>) -> u8 {
+    match color {
+        Some("orange") => 0,
+        Some("green") => 1,
+        _ => 2,
+    }
 }
 
 fn copy_to_clipboard(text: &str) -> Result<(), String> {

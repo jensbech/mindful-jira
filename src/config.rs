@@ -34,6 +34,8 @@ pub struct Config {
     pub api_token: String,
     #[serde(default = "default_status_filters")]
     pub status_filters: Vec<StatusFilter>,
+    #[serde(default)]
+    pub sort_order: Option<String>,
 }
 
 pub fn config_dir() -> PathBuf {

@@ -95,6 +95,7 @@ fn run_setup() {
     let email = prompt("Email", existing.as_ref().map_or("", |c| &c.email));
     let api_token = prompt("API token", existing.as_ref().map_or("", |c| &c.api_token));
 
+    let sort_order = existing.as_ref().and_then(|c| c.sort_order.clone());
     let status_filters = existing
         .map(|c| c.status_filters)
         .unwrap_or_else(config::default_status_filters);
@@ -104,6 +105,7 @@ fn run_setup() {
         email,
         api_token,
         status_filters,
+        sort_order,
     };
     config.save();
 
@@ -176,6 +178,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::Char('f') => app.open_filter_editor(),
                             KeyCode::Char('/') => app.start_search(),
                             KeyCode::Char('p') => app.toggle_show_all_parents().await,
+                            KeyCode::Char('o') => app.open_sort_picker(),
                             KeyCode::Char('r') => app.refresh().await,
                             KeyCode::Char('?') => app.show_legend = !app.show_legend,
                             _ => {}
@@ -480,6 +483,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::Up | KeyCode::Char('k') => app.highlight_picker_up(),
                             KeyCode::Down | KeyCode::Char('j') => app.highlight_picker_down(),
                             KeyCode::Enter => app.apply_highlight(),
+                            _ => {}
+                        },
+                        Mode::SortPicker => match key.code {
+                            KeyCode::Esc => app.cancel_sort_picker(),
+                            KeyCode::Up | KeyCode::Char('k') => app.sort_picker_up(),
+                            KeyCode::Down | KeyCode::Char('j') => app.sort_picker_down(),
+                            KeyCode::Enter => app.apply_sort(),
                             _ => {}
                         },
                         Mode::FilterEditor => match key.code {

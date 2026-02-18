@@ -21,6 +21,41 @@ pub struct ResolvedMention {
     pub display_name: String,
 }
 
+#[derive(PartialEq, Clone, Copy)]
+pub enum HighlightColor {
+    Yellow,
+    Green,
+}
+
+impl HighlightColor {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            HighlightColor::Yellow => "yellow",
+            HighlightColor::Green => "green",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "yellow" => Some(HighlightColor::Yellow),
+            "green" => Some(HighlightColor::Green),
+            _ => None,
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            HighlightColor::Yellow => "Doing now",
+            HighlightColor::Green => "Ready for review",
+        }
+    }
+}
+
+pub const HIGHLIGHT_OPTIONS: [HighlightColor; 2] = [
+    HighlightColor::Yellow,
+    HighlightColor::Green,
+];
+
 #[derive(PartialEq)]
 pub enum Mode {
     Normal,
@@ -36,6 +71,7 @@ pub enum Mode {
     DetailConfirmDelete,
     DetailTransition,
     DetailConfirmTransition,
+    HighlightPicker,
 }
 
 #[derive(Clone)]
@@ -56,7 +92,7 @@ pub struct App {
     pub long_notes: HashMap<String, String>,
     pub long_note_input: String,
     pub long_note_scroll: usize,
-    pub highlighted_keys: std::collections::HashSet<String>,
+    pub highlighted_keys: HashMap<String, String>,
     pub muted_keys: std::collections::HashSet<String>,
     pub config: Config,
     pub status_msg: String,
@@ -91,6 +127,8 @@ pub struct App {
     // Mention state
     pub mention: Option<MentionState>,
     pub resolved_mentions: Vec<ResolvedMention>,
+    // Highlight picker state
+    pub highlight_selected: usize,
 }
 
 impl App {
@@ -135,6 +173,7 @@ impl App {
             show_legend: false,
             mention: None,
             resolved_mentions: Vec::new(),
+            highlight_selected: 0,
         }
     }
 
@@ -286,14 +325,61 @@ impl App {
         }
     }
 
-    pub fn toggle_highlight(&mut self) {
+    pub fn open_highlight_picker(&mut self) {
+        if self.rows.get(self.selected).is_none() {
+            return;
+        }
+        // Pre-select current highlight if one exists
+        let key = &self.rows[self.selected].issue.key;
+        self.highlight_selected = match self.highlighted_keys.get(key).and_then(|s| HighlightColor::from_str(s)) {
+            Some(HighlightColor::Yellow) => 0,
+            Some(HighlightColor::Green) => 1,
+            None => 0,
+        };
+        self.mode = Mode::HighlightPicker;
+    }
+
+    pub fn highlight_picker_up(&mut self) {
+        if self.highlight_selected > 0 {
+            self.highlight_selected -= 1;
+        }
+    }
+
+    pub fn highlight_picker_down(&mut self) {
+        let max = if self.current_highlight().is_some() {
+            HIGHLIGHT_OPTIONS.len() // includes "Remove" at index len
+        } else {
+            HIGHLIGHT_OPTIONS.len() - 1
+        };
+        if self.highlight_selected < max {
+            self.highlight_selected += 1;
+        }
+    }
+
+    pub fn apply_highlight(&mut self) {
         if let Some(row) = self.rows.get(self.selected) {
             let key = row.issue.key.clone();
-            if !self.highlighted_keys.remove(&key) {
-                self.highlighted_keys.insert(key);
+            if self.highlight_selected < HIGHLIGHT_OPTIONS.len() {
+                let color = HIGHLIGHT_OPTIONS[self.highlight_selected];
+                self.highlighted_keys.insert(key, color.as_str().to_string());
+            } else {
+                // "Remove" option
+                self.highlighted_keys.remove(&key);
             }
             notes::save_highlights(&self.highlighted_keys);
         }
+        self.mode = Mode::Normal;
+    }
+
+    pub fn cancel_highlight_picker(&mut self) {
+        self.mode = Mode::Normal;
+    }
+
+    pub fn current_highlight(&self) -> Option<HighlightColor> {
+        self.rows
+            .get(self.selected)
+            .and_then(|row| self.highlighted_keys.get(&row.issue.key))
+            .and_then(|s| HighlightColor::from_str(s))
     }
 
     pub fn toggle_mute(&mut self) {

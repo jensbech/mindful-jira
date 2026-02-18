@@ -165,7 +165,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::Char('w') => app.confirm_open_in_browser(),
                             KeyCode::Char('s') => app.start_editing_status(),
                             KeyCode::Char('n') => app.start_editing_long_note(),
-                            KeyCode::Char('h') => app.toggle_highlight(),
+                            KeyCode::Char('h') => app.open_highlight_picker(),
                             KeyCode::Char('m') => app.toggle_mute(),
                             KeyCode::Char('y') => app.copy_key_to_clipboard(),
                             KeyCode::Char('f') => app.open_filter_editor(),
@@ -428,6 +428,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::Char(c) => {
                                 input_insert(&mut app.note_input, &mut app.cursor_pos, c);
                             }
+                            _ => {}
+                        },
+                        Mode::HighlightPicker => match key.code {
+                            KeyCode::Esc => app.cancel_highlight_picker(),
+                            KeyCode::Up | KeyCode::Char('k') => app.highlight_picker_up(),
+                            KeyCode::Down | KeyCode::Char('j') => app.highlight_picker_down(),
+                            KeyCode::Enter => app.apply_highlight(),
                             _ => {}
                         },
                         Mode::FilterEditor => match key.code {

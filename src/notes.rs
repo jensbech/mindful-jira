@@ -45,15 +45,25 @@ fn highlight_path() -> std::path::PathBuf {
     config::config_dir().join("highlights.json")
 }
 
-pub fn load_highlights() -> std::collections::HashSet<String> {
+pub fn load_highlights() -> HashMap<String, String> {
     let contents = match fs::read_to_string(highlight_path()) {
         Ok(c) => c,
-        Err(_) => return std::collections::HashSet::new(),
+        Err(_) => return HashMap::new(),
     };
-    serde_json::from_str(&contents).unwrap_or_default()
+    // Try loading as new format (HashMap<String, String>)
+    if let Ok(map) = serde_json::from_str::<HashMap<String, String>>(&contents) {
+        return map;
+    }
+    // Migrate from old format (HashSet<String>) — treat all as "yellow"
+    if let Ok(set) = serde_json::from_str::<std::collections::HashSet<String>>(&contents) {
+        let map: HashMap<String, String> = set.into_iter().map(|k| (k, "yellow".to_string())).collect();
+        save_highlights(&map);
+        return map;
+    }
+    HashMap::new()
 }
 
-pub fn save_highlights(keys: &std::collections::HashSet<String>) {
+pub fn save_highlights(keys: &HashMap<String, String>) {
     if let Ok(json) = serde_json::to_string(keys) {
         let _ = fs::write(highlight_path(), json);
     }

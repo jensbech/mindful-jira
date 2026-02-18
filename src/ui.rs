@@ -7,11 +7,12 @@ use ratatui::widgets::{
 };
 use ratatui::Frame;
 
-use crate::app::{fuzzy_match, App, Mode};
+use crate::app::{fuzzy_match, App, HighlightColor, Mode, HIGHLIGHT_OPTIONS};
 
 const ZEBRA_DARK: Color = Color::Rgb(30, 30, 40);
 const HIGHLIGHT_BG: Color = Color::Rgb(55, 55, 80);
-const HIGHLIGHTED_BG: Color = Color::Rgb(50, 50, 20);
+const HIGHLIGHT_YELLOW_BG: Color = Color::Rgb(50, 50, 20);
+const HIGHLIGHT_GREEN_BG: Color = Color::Rgb(20, 50, 20);
 const DIM: Color = Color::Rgb(100, 100, 110);
 const ACCENT: Color = Color::Rgb(180, 180, 255);
 
@@ -122,6 +123,10 @@ pub fn draw(f: &mut Frame, app: &App) {
         Mode::EditingLongNote => {
             dim_background(f);
             draw_long_note_modal(f, app);
+        }
+        Mode::HighlightPicker => {
+            dim_background(f);
+            draw_highlight_picker_modal(f, app);
         }
         _ => {}
     }
@@ -318,9 +323,12 @@ fn draw_table(f: &mut Frame, app: &App, area: Rect) {
             let base_fg = if is_parent || is_muted { DIM } else { Color::White };
             let base_style = Style::default().fg(base_fg);
 
-            let is_highlighted = app.highlighted_keys.contains(&issue.key);
-            let bg = if is_highlighted {
-                HIGHLIGHTED_BG
+            let highlight_color = app.highlighted_keys.get(&issue.key).and_then(|s| HighlightColor::from_str(s));
+            let bg = if let Some(color) = highlight_color {
+                match color {
+                    HighlightColor::Yellow => HIGHLIGHT_YELLOW_BG,
+                    HighlightColor::Green => HIGHLIGHT_GREEN_BG,
+                }
             } else if i % 2 == 1 {
                 ZEBRA_DARK
             } else {
@@ -514,6 +522,75 @@ fn draw_confirm_browser_modal(f: &mut Frame, app: &App) {
             Style::default().fg(Color::Rgb(100, 100, 120)),
         )),
     ];
+
+    f.render_widget(Paragraph::new(lines), inner);
+}
+
+// ── Highlight picker modal ───────────────────────────────────
+
+fn draw_highlight_picker_modal(f: &mut Frame, app: &App) {
+    let current = app.current_highlight();
+    // Options: Yellow, Green, Remove (only if currently highlighted)
+    let has_highlight = current.is_some();
+    let option_count = if has_highlight { HIGHLIGHT_OPTIONS.len() + 1 } else { HIGHLIGHT_OPTIONS.len() };
+    let height = (option_count as u16) + 4; // border + title + options + hints
+
+    let area = f.area();
+    let width = 36u16.min(area.width.saturating_sub(4));
+    let x = (area.width.saturating_sub(width)) / 2;
+    let y = (area.height.saturating_sub(height)) / 2;
+    let modal_area = Rect::new(x, y, width, height);
+
+    f.render_widget(Clear, modal_area);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(ACCENT))
+        .title(Span::styled(
+            " Highlight ",
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ));
+
+    let inner = block.inner(modal_area);
+    f.render_widget(block, modal_area);
+
+    let mut lines: Vec<Line> = Vec::new();
+
+    for (i, opt) in HIGHLIGHT_OPTIONS.iter().enumerate() {
+        let marker = if i == app.highlight_selected { "▶ " } else { "  " };
+        let is_active = current.map(|c| c.as_str() == opt.as_str()).unwrap_or(false);
+        let dot_color = match opt {
+            HighlightColor::Yellow => Color::Yellow,
+            HighlightColor::Green => Color::Green,
+        };
+        let label = if is_active {
+            format!("{} (active)", opt.label())
+        } else {
+            opt.label().to_string()
+        };
+        let fg = if i == app.highlight_selected { Color::White } else { Color::Rgb(180, 180, 180) };
+        lines.push(Line::from(vec![
+            Span::styled(marker, Style::default().fg(fg)),
+            Span::styled("● ", Style::default().fg(dot_color)),
+            Span::styled(label, Style::default().fg(fg)),
+        ]));
+    }
+
+    if has_highlight {
+        let i = HIGHLIGHT_OPTIONS.len();
+        let marker = if i == app.highlight_selected { "▶ " } else { "  " };
+        let fg = if i == app.highlight_selected { Color::White } else { Color::Rgb(180, 180, 180) };
+        lines.push(Line::from(vec![
+            Span::styled(marker, Style::default().fg(fg)),
+            Span::styled("✕ ", Style::default().fg(Color::Rgb(200, 80, 80))),
+            Span::styled("Remove highlight", Style::default().fg(fg)),
+        ]));
+    }
+
+    lines.push(Line::from(Span::styled(
+        " Enter:Select  Esc:Cancel",
+        Style::default().fg(Color::Rgb(100, 100, 120)),
+    )));
 
     f.render_widget(Paragraph::new(lines), inner);
 }
@@ -1729,6 +1806,16 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
                     .add_modifier(Modifier::BOLD),
             ),
             " y/Enter:Confirm  n/Esc:Cancel ".to_string(),
+        ),
+        Mode::HighlightPicker => (
+            Span::styled(
+                " HIGHLIGHT ",
+                Style::default()
+                    .bg(Color::Yellow)
+                    .fg(Color::Black)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            " ↑↓:Navigate  Enter:Select  Esc:Cancel ".to_string(),
         ),
     };
 

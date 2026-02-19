@@ -1,6 +1,6 @@
 [package]
 name = "mindful-jira"
-version = "1.14.0"
+version = "1.21.0"
 edition = "2021"
 authors = ["Jens Bech-Sørensen"]
 license = "MIT"

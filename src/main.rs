@@ -96,6 +96,7 @@ fn run_setup() {
     let api_token = prompt("API token", existing.as_ref().map_or("", |c| &c.api_token));
 
     let sort_order = existing.as_ref().and_then(|c| c.sort_order.clone());
+    let hidden_columns = existing.as_ref().map(|c| c.hidden_columns.clone()).unwrap_or_default();
     let status_filters = existing
         .map(|c| c.status_filters)
         .unwrap_or_else(config::default_status_filters);
@@ -106,6 +107,7 @@ fn run_setup() {
         api_token,
         status_filters,
         sort_order,
+        hidden_columns,
     };
     config.save();
 
@@ -184,6 +186,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::Char('/') => app.start_search(),
                             KeyCode::Char('p') => app.toggle_show_all_parents().await,
                             KeyCode::Char('o') => app.open_sort_picker(),
+                            KeyCode::Char('c') => app.open_column_picker(),
                             KeyCode::Char('r') => app.refresh().await,
                             KeyCode::Char('?') => app.show_legend = !app.show_legend,
                             _ => {}
@@ -495,6 +498,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::Up | KeyCode::Char('k') => app.sort_picker_up(),
                             KeyCode::Down | KeyCode::Char('j') => app.sort_picker_down(),
                             KeyCode::Enter => app.apply_sort(),
+                            _ => {}
+                        },
+                        Mode::ColumnPicker => match key.code {
+                            KeyCode::Esc => app.close_column_picker(),
+                            KeyCode::Up | KeyCode::Char('k') => app.column_picker_up(),
+                            KeyCode::Down | KeyCode::Char('j') => app.column_picker_down(),
+                            KeyCode::Char(' ') => app.toggle_column_visibility(),
                             _ => {}
                         },
                         Mode::FilterEditor => match key.code {

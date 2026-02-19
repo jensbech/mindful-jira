@@ -105,6 +105,49 @@ impl SortCriteria {
     }
 }
 
+#[derive(Clone, Copy, PartialEq)]
+pub enum Column {
+    Assignee,
+    Reporter,
+    Priority,
+    Status,
+    Resolution,
+    Created,
+}
+
+impl Column {
+    pub const ALL: [Column; 6] = [
+        Column::Assignee,
+        Column::Reporter,
+        Column::Priority,
+        Column::Status,
+        Column::Resolution,
+        Column::Created,
+    ];
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Column::Assignee => "Assignee",
+            Column::Reporter => "Reporter",
+            Column::Priority => "Priority",
+            Column::Status => "Status",
+            Column::Resolution => "Resolution",
+            Column::Created => "Created",
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Column::Assignee => "assignee",
+            Column::Reporter => "reporter",
+            Column::Priority => "priority",
+            Column::Status => "status",
+            Column::Resolution => "resolution",
+            Column::Created => "created",
+        }
+    }
+}
+
 fn priority_rank(p: &str) -> u8 {
     match p {
         "Blocker" => 6,
@@ -135,6 +178,7 @@ pub enum Mode {
     DetailEditingSummary,
     HighlightPicker,
     SortPicker,
+    ColumnPicker,
     ConfirmQuit,
 }
 
@@ -202,6 +246,8 @@ pub struct App {
     // Sort picker state
     pub sort_selected: usize,
     pub sort_criteria: SortCriteria,
+    // Column picker state
+    pub column_picker_selected: usize,
 }
 
 impl App {
@@ -257,6 +303,7 @@ impl App {
             detail_status_set_at: Instant::now(),
             sort_selected: 0,
             sort_criteria,
+            column_picker_selected: 0,
         }
     }
 
@@ -513,6 +560,44 @@ impl App {
     }
 
     pub fn cancel_sort_picker(&mut self) {
+        self.mode = Mode::Normal;
+    }
+
+    // --- Column picker ---
+
+    pub fn is_column_visible(&self, col: Column) -> bool {
+        !self.config.hidden_columns.iter().any(|s| s == col.as_str())
+    }
+
+    pub fn open_column_picker(&mut self) {
+        self.column_picker_selected = 0;
+        self.mode = Mode::ColumnPicker;
+    }
+
+    pub fn column_picker_up(&mut self) {
+        if self.column_picker_selected > 0 {
+            self.column_picker_selected -= 1;
+        }
+    }
+
+    pub fn column_picker_down(&mut self) {
+        if self.column_picker_selected < Column::ALL.len() - 1 {
+            self.column_picker_selected += 1;
+        }
+    }
+
+    pub fn toggle_column_visibility(&mut self) {
+        let col = Column::ALL[self.column_picker_selected];
+        let key = col.as_str().to_string();
+        if let Some(pos) = self.config.hidden_columns.iter().position(|s| s == &key) {
+            self.config.hidden_columns.remove(pos);
+        } else {
+            self.config.hidden_columns.push(key);
+        }
+        self.config.save();
+    }
+
+    pub fn close_column_picker(&mut self) {
         self.mode = Mode::Normal;
     }
 

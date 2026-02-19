@@ -36,6 +36,8 @@ pub struct Config {
     pub status_filters: Vec<StatusFilter>,
     #[serde(default)]
     pub sort_order: Option<String>,
+    #[serde(default)]
+    pub hidden_columns: Vec<String>,
 }
 
 pub fn config_dir() -> PathBuf {

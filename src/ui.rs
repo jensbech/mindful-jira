@@ -7,7 +7,7 @@ use ratatui::widgets::{
 };
 use ratatui::Frame;
 
-use crate::app::{fuzzy_match, App, HighlightColor, Mode, SortCriteria, HIGHLIGHT_OPTIONS};
+use crate::app::{fuzzy_match, App, Column, HighlightColor, Mode, SortCriteria, HIGHLIGHT_OPTIONS};
 
 const ZEBRA_DARK: Color = Color::Rgb(30, 30, 40);
 const HIGHLIGHT_BG: Color = Color::Rgb(55, 55, 80);
@@ -133,6 +133,10 @@ pub fn draw(f: &mut Frame, app: &App) {
             dim_background(f);
             draw_sort_picker_modal(f, app);
         }
+        Mode::ColumnPicker => {
+            dim_background(f);
+            draw_column_picker_modal(f, app);
+        }
         Mode::ConfirmQuit => {
             dim_background(f);
             draw_confirm_quit_modal(f);
@@ -246,7 +250,12 @@ fn truncate(s: &str, max: usize) -> String {
 // ── Main table ──────────────────────────────────────────────
 
 fn draw_table(f: &mut Frame, app: &App, area: Rect) {
-    let show_assignee = app.show_all_parents;
+    let col_assignee = app.show_all_parents && app.is_column_visible(Column::Assignee);
+    let col_reporter = app.is_column_visible(Column::Reporter);
+    let col_priority = app.is_column_visible(Column::Priority);
+    let col_status = app.is_column_visible(Column::Status);
+    let col_resolution = app.is_column_visible(Column::Resolution);
+    let col_created = app.is_column_visible(Column::Created);
 
     const ASSIGNEE_W: u16 = 16;
     const REPORTER_W: u16 = 18;
@@ -258,18 +267,15 @@ fn draw_table(f: &mut Frame, app: &App, area: Rect) {
     const BORDERS: u16 = 2;
     const HIGHLIGHT_SYM: u16 = 2;
 
-    let num_cols: u16 = if show_assignee { 8 } else { 7 };
-    let assignee_total = if show_assignee { ASSIGNEE_W } else { 0 };
-
-    let fixed = assignee_total
-        + REPORTER_W
-        + PRIORITY_W
-        + STATUS_W
-        + RESOLUTION_W
-        + CREATED_W
-        + (COL_SPACING * (num_cols - 1))
-        + BORDERS
-        + HIGHLIGHT_SYM;
+    let mut num_cols: u16 = 2; // Work + My Status always present
+    let mut fixed: u16 = BORDERS + HIGHLIGHT_SYM;
+    if col_assignee { num_cols += 1; fixed += ASSIGNEE_W; }
+    if col_reporter { num_cols += 1; fixed += REPORTER_W; }
+    if col_priority { num_cols += 1; fixed += PRIORITY_W; }
+    if col_status { num_cols += 1; fixed += STATUS_W; }
+    if col_resolution { num_cols += 1; fixed += RESOLUTION_W; }
+    if col_created { num_cols += 1; fixed += CREATED_W; }
+    fixed += COL_SPACING * (num_cols - 1);
 
     let remaining = area.width.saturating_sub(fixed);
     let work_w = ((remaining as u32 * 3 / 4) as u16).max(20);
@@ -286,17 +292,13 @@ fn draw_table(f: &mut Frame, app: &App, area: Rect) {
         .add_modifier(Modifier::BOLD);
 
     let mut header_cells = vec![Cell::from("Work")];
-    if show_assignee {
-        header_cells.push(Cell::from("Assignee"));
-    }
-    header_cells.extend([
-        Cell::from("Reporter"),
-        Cell::from("Priority"),
-        Cell::from("Status"),
-        Cell::from("Resolution"),
-        Cell::from("Created"),
-        Cell::from("My Status"),
-    ]);
+    if col_assignee { header_cells.push(Cell::from("Assignee")); }
+    if col_reporter { header_cells.push(Cell::from("Reporter")); }
+    if col_priority { header_cells.push(Cell::from("Priority")); }
+    if col_status { header_cells.push(Cell::from("Status")); }
+    if col_resolution { header_cells.push(Cell::from("Resolution")); }
+    if col_created { header_cells.push(Cell::from("Created")); }
+    header_cells.push(Cell::from("My Status"));
 
     let header = Row::new(header_cells)
         .style(header_style)
@@ -405,7 +407,7 @@ fn draw_table(f: &mut Frame, app: &App, area: Rect) {
             work_spans.extend(text_spans);
             let work_cell = Cell::from(Line::from(work_spans));
             let mut cells = vec![work_cell];
-            if show_assignee {
+            if col_assignee {
                 let assignee_style = if is_parent || is_muted {
                     Style::default().fg(DIM)
                 } else {
@@ -416,34 +418,38 @@ fn draw_table(f: &mut Frame, app: &App, area: Rect) {
                     assignee_style.bg(bg),
                 )));
             }
-            cells.extend([
-                Cell::from(Span::styled(reporter_text, base_style.bg(bg))),
-                Cell::from(Span::styled(issue.priority.clone(), p_style)),
-                Cell::from(Span::styled(status_text, s_style)),
-                Cell::from(Span::styled(issue.resolution.clone(), base_style.bg(bg))),
-                Cell::from(Span::styled(
+            if col_reporter {
+                cells.push(Cell::from(Span::styled(reporter_text, base_style.bg(bg))));
+            }
+            if col_priority {
+                cells.push(Cell::from(Span::styled(issue.priority.clone(), p_style)));
+            }
+            if col_status {
+                cells.push(Cell::from(Span::styled(status_text, s_style)));
+            }
+            if col_resolution {
+                cells.push(Cell::from(Span::styled(issue.resolution.clone(), base_style.bg(bg))));
+            }
+            if col_created {
+                cells.push(Cell::from(Span::styled(
                     issue.created.clone(),
                     Style::default().fg(Color::DarkGray).bg(bg),
-                )),
-                Cell::from(Span::styled(note_text, note_style)),
-            ]);
+                )));
+            }
+            cells.push(Cell::from(Span::styled(note_text, note_style)));
 
             Row::new(cells).style(row_style)
         })
         .collect();
 
     let mut widths = vec![Constraint::Length(work_w)];
-    if show_assignee {
-        widths.push(Constraint::Length(ASSIGNEE_W));
-    }
-    widths.extend([
-        Constraint::Length(REPORTER_W),
-        Constraint::Length(PRIORITY_W),
-        Constraint::Length(STATUS_W),
-        Constraint::Length(RESOLUTION_W),
-        Constraint::Length(CREATED_W),
-        Constraint::Length(notes_w),
-    ]);
+    if col_assignee { widths.push(Constraint::Length(ASSIGNEE_W)); }
+    if col_reporter { widths.push(Constraint::Length(REPORTER_W)); }
+    if col_priority { widths.push(Constraint::Length(PRIORITY_W)); }
+    if col_status { widths.push(Constraint::Length(STATUS_W)); }
+    if col_resolution { widths.push(Constraint::Length(RESOLUTION_W)); }
+    if col_created { widths.push(Constraint::Length(CREATED_W)); }
+    widths.push(Constraint::Length(notes_w));
 
     let block = Block::default()
         .borders(Borders::ALL)
@@ -691,6 +697,68 @@ fn draw_sort_picker_modal(f: &mut Frame, app: &App) {
 
     lines.push(Line::from(Span::styled(
         " Enter:Select  Esc:Cancel",
+        Style::default().fg(Color::Rgb(100, 100, 120)),
+    )));
+
+    f.render_widget(Paragraph::new(lines), inner);
+}
+
+// ── Column picker modal ─────────────────────────────────────
+
+fn draw_column_picker_modal(f: &mut Frame, app: &App) {
+    let options = Column::ALL;
+    let height = (options.len() as u16) + 4;
+
+    let area = f.area();
+    let width = 40u16.min(area.width.saturating_sub(4));
+    let x = (area.width.saturating_sub(width)) / 2;
+    let y = (area.height.saturating_sub(height)) / 2;
+    let modal_area = Rect::new(x, y, width, height);
+
+    f.render_widget(Clear, modal_area);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(ACCENT))
+        .title(Span::styled(
+            " Columns ",
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ));
+
+    let inner = block.inner(modal_area);
+    f.render_widget(block, modal_area);
+
+    let mut lines: Vec<Line> = Vec::new();
+
+    for (i, col) in options.iter().enumerate() {
+        let selected = i == app.column_picker_selected;
+        let marker = if selected { "▶ " } else { "  " };
+        let visible = app.is_column_visible(*col);
+
+        let (icon, icon_color) = if visible {
+            ("✓", Color::Green)
+        } else {
+            ("✕", Color::Red)
+        };
+
+        let label = col.label();
+        let note = if *col == Column::Assignee && !app.show_all_parents {
+            " (needs tree mode)"
+        } else {
+            ""
+        };
+
+        let fg = if selected { Color::White } else { Color::Rgb(180, 180, 180) };
+        lines.push(Line::from(vec![
+            Span::styled(marker, Style::default().fg(fg)),
+            Span::styled(format!("{icon} "), Style::default().fg(icon_color)),
+            Span::styled(label.to_string(), Style::default().fg(fg)),
+            Span::styled(note.to_string(), Style::default().fg(Color::DarkGray)),
+        ]));
+    }
+
+    lines.push(Line::from(Span::styled(
+        " ↑↓:Navigate  Space:Toggle  Esc:Close",
         Style::default().fg(Color::Rgb(100, 100, 120)),
     )));
 
@@ -1841,7 +1909,7 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
                     .fg(Color::White),
             ),
             format!(
-                " q:Quit  j/k:Nav  Enter:Open  w:Browser  s:Status  n:Notes  h:Highlight  m:Mute  o:Sort  y:Copy  f:Filter  /:Search  {tree_label}  r:Refresh  ?:Legend "
+                " q:Quit  j/k:Nav  Enter:Open  w:Browser  s:Status  n:Notes  h:Highlight  m:Mute  o:Sort  c:Columns  y:Copy  f:Filter  /:Search  {tree_label}  r:Refresh  ?:Legend "
             ),
         ),
         Mode::Searching => (
@@ -1984,6 +2052,16 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
                     .add_modifier(Modifier::BOLD),
             ),
             " ↑↓:Navigate  Enter:Select  Esc:Cancel ".to_string(),
+        ),
+        Mode::ColumnPicker => (
+            Span::styled(
+                " COLUMNS ",
+                Style::default()
+                    .bg(Color::Rgb(100, 160, 200))
+                    .fg(Color::Black)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            " ↑↓:Navigate  Space:Toggle  Esc:Close ".to_string(),
         ),
         Mode::ConfirmQuit => (
             Span::styled(

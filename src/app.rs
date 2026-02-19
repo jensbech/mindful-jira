@@ -135,6 +135,7 @@ pub enum Mode {
     DetailEditingSummary,
     HighlightPicker,
     SortPicker,
+    ConfirmQuit,
 }
 
 #[derive(Clone)]
@@ -340,6 +341,14 @@ impl App {
     }
 
     pub fn cancel_browser(&mut self) {
+        self.mode = Mode::Normal;
+    }
+
+    pub fn confirm_quit(&mut self) {
+        self.mode = Mode::ConfirmQuit;
+    }
+
+    pub fn cancel_quit(&mut self) {
         self.mode = Mode::Normal;
     }
 

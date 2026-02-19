@@ -164,8 +164,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             match event::read()? {
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
                     match app.mode {
+                        Mode::ConfirmQuit => match key.code {
+                            KeyCode::Char('y') | KeyCode::Enter => break,
+                            KeyCode::Char('n') | KeyCode::Esc => app.cancel_quit(),
+                            _ => {}
+                        },
                         Mode::Normal => match key.code {
-                            KeyCode::Char('q') | KeyCode::Esc => break,
+                            KeyCode::Char('q') | KeyCode::Esc => app.confirm_quit(),
                             KeyCode::Up | KeyCode::Char('k') => app.move_up(),
                             KeyCode::Down | KeyCode::Char('j') => app.move_down(),
                             KeyCode::Enter => app.open_ticket_detail().await,

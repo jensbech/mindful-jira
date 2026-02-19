@@ -133,6 +133,10 @@ pub fn draw(f: &mut Frame, app: &App) {
             dim_background(f);
             draw_sort_picker_modal(f, app);
         }
+        Mode::ConfirmQuit => {
+            dim_background(f);
+            draw_confirm_quit_modal(f);
+        }
         _ => {}
     }
 
@@ -524,6 +528,45 @@ fn draw_confirm_browser_modal(f: &mut Frame, app: &App) {
         Line::from(""),
         Line::from(Span::styled(
             "  y/Enter:Confirm  n/Esc:Cancel",
+            Style::default().fg(Color::Rgb(100, 100, 120)),
+        )),
+    ];
+
+    f.render_widget(Paragraph::new(lines), inner);
+}
+
+// ── Confirm quit modal ───────────────────────────────────────
+
+fn draw_confirm_quit_modal(f: &mut Frame) {
+    let area = f.area();
+    let width = 36u16.min(area.width.saturating_sub(4));
+    let height = 6u16;
+    let x = (area.width.saturating_sub(width)) / 2;
+    let y = (area.height.saturating_sub(height)) / 2;
+    let modal_area = Rect::new(x, y, width, height);
+
+    f.render_widget(Clear, modal_area);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(ACCENT))
+        .title(Span::styled(
+            " Quit ",
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        ));
+
+    let inner = block.inner(modal_area);
+    f.render_widget(block, modal_area);
+
+    let lines = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            "  Quit Mindful Jira?",
+            Style::default().fg(Color::White),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "  y/Enter:Quit  n/Esc:Cancel",
             Style::default().fg(Color::Rgb(100, 100, 120)),
         )),
     ];
@@ -1941,6 +1984,16 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
                     .add_modifier(Modifier::BOLD),
             ),
             " ↑↓:Navigate  Enter:Select  Esc:Cancel ".to_string(),
+        ),
+        Mode::ConfirmQuit => (
+            Span::styled(
+                " QUIT ",
+                Style::default()
+                    .bg(Color::Rgb(180, 60, 60))
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            " y/Enter:Quit  n/Esc:Cancel ".to_string(),
         ),
     };
 

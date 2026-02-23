@@ -178,7 +178,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::Char('q') | KeyCode::Esc => app.confirm_quit(),
                             KeyCode::Up | KeyCode::Char('k') => app.move_up(),
                             KeyCode::Down | KeyCode::Char('j') => app.move_down(),
-                            KeyCode::Enter => app.open_ticket_detail().await,
+                            KeyCode::Enter => {
+                                if let Some(row) = app.rows.get(app.selected) {
+                                    let key = row.issue.key.clone();
+                                    app.set_status(format!("Loading {key}..."));
+                                    terminal.draw(|f| ui::draw(f, &app))?;
+                                }
+                                app.open_ticket_detail().await;
+                            }
                             KeyCode::Char('w') => app.confirm_open_in_browser(),
                             KeyCode::Char('s') => app.start_editing_status(),
                             KeyCode::Char('n') => app.start_editing_long_note(),
@@ -187,10 +194,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::Char('y') => app.copy_key_to_clipboard(),
                             KeyCode::Char('f') => app.open_filter_editor(),
                             KeyCode::Char('/') => app.start_search(),
-                            KeyCode::Char('p') => app.toggle_show_all_parents().await,
+                            KeyCode::Char('p') => {
+                                app.set_status("Fetching issues...");
+                                terminal.draw(|f| ui::draw(f, &app))?;
+                                app.toggle_show_all_parents().await;
+                            }
                             KeyCode::Char('o') => app.open_sort_picker(),
                             KeyCode::Char('c') => app.open_column_picker(),
-                            KeyCode::Char('r') => app.refresh().await,
+                            KeyCode::Char('r') => {
+                                app.set_status("Fetching issues...");
+                                terminal.draw(|f| ui::draw(f, &app))?;
+                                app.refresh().await;
+                            }
                             KeyCode::Char('?') => app.show_legend = !app.show_legend,
                             _ => {}
                         },
@@ -226,9 +241,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::Char('c') => app.start_adding_comment(),
                             KeyCode::Char('e') => app.start_editing_comment(),
                             KeyCode::Char('x') => app.confirm_delete_comment(),
-                            KeyCode::Char('t') => app.open_transition_picker().await,
+                            KeyCode::Char('t') => {
+                                app.set_detail_status("Loading transitions...");
+                                terminal.draw(|f| ui::draw(f, &app))?;
+                                app.open_transition_picker().await;
+                            }
                             KeyCode::Char('s') => app.start_editing_summary(),
-                            KeyCode::Char('g') => app.open_pr_list().await,
+                            KeyCode::Char('g') => {
+                                app.set_detail_status("Fetching PRs...");
+                                terminal.draw(|f| ui::draw(f, &app))?;
+                                app.open_pr_list().await;
+                            }
                             KeyCode::Char('?') => app.show_legend = !app.show_legend,
                             _ => {}
                         },
@@ -247,7 +270,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             _ => {}
                         },
                         Mode::DetailConfirmTransition => match key.code {
-                            KeyCode::Char('y') | KeyCode::Enter => app.execute_transition().await,
+                            KeyCode::Char('y') | KeyCode::Enter => {
+                                app.set_detail_status("Transitioning...");
+                                terminal.draw(|f| ui::draw(f, &app))?;
+                                app.execute_transition().await;
+                            }
                             KeyCode::Char('n') | KeyCode::Esc => app.cancel_confirm_transition(),
                             _ => {}
                         },
@@ -299,8 +326,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 match key.code {
                                     KeyCode::Enter => {
                                         if app.mode == Mode::DetailAddingComment {
+                                            app.set_detail_status("Adding comment...");
+                                            terminal.draw(|f| ui::draw(f, &app))?;
                                             app.submit_comment().await;
                                         } else {
+                                            app.set_detail_status("Updating comment...");
+                                            terminal.draw(|f| ui::draw(f, &app))?;
                                             app.save_edited_comment().await;
                                         }
                                     }
@@ -354,12 +385,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                         }
                         Mode::DetailConfirmDelete => match key.code {
-                            KeyCode::Char('y') => app.execute_delete_comment().await,
+                            KeyCode::Char('y') => {
+                                app.set_detail_status("Deleting comment...");
+                                terminal.draw(|f| ui::draw(f, &app))?;
+                                app.execute_delete_comment().await;
+                            }
                             KeyCode::Char('n') | KeyCode::Esc => app.cancel_comment_action(),
                             _ => {}
                         },
                         Mode::DetailEditingSummary => match key.code {
-                            KeyCode::Enter => app.save_summary().await,
+                            KeyCode::Enter => {
+                                app.set_detail_status("Updating summary...");
+                                terminal.draw(|f| ui::draw(f, &app))?;
+                                app.save_summary().await;
+                            }
                             KeyCode::Esc => app.cancel_editing_summary(),
                             KeyCode::Left => {
                                 if app.cursor_pos > 0 {
@@ -520,7 +559,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         },
                         Mode::FilterEditor => match key.code {
                             KeyCode::Esc => app.close_filter_editor(),
-                            KeyCode::Enter => app.apply_filters_and_refresh().await,
+                            KeyCode::Enter => {
+                                app.set_status("Fetching issues...");
+                                terminal.draw(|f| ui::draw(f, &app))?;
+                                app.apply_filters_and_refresh().await;
+                            }
                             KeyCode::Up | KeyCode::Char('k') => app.filter_move_up(),
                             KeyCode::Down | KeyCode::Char('j') => app.filter_move_down(),
                             KeyCode::Char(' ') => app.toggle_filter(),

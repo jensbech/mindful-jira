@@ -7,7 +7,10 @@ use ratatui::widgets::{
 };
 use ratatui::Frame;
 
-use crate::app::{fuzzy_match, App, Column, HighlightColor, Mode, SortCriteria, HIGHLIGHT_OPTIONS};
+use crate::app::{
+    fuzzy_match, App, Column, DetailRenderCache, HighlightColor, Mode, SortCriteria,
+    HIGHLIGHT_OPTIONS,
+};
 
 const ZEBRA_DARK: Color = Color::Rgb(30, 30, 40);
 const HIGHLIGHT_BG: Color = Color::Rgb(55, 55, 80);
@@ -1131,117 +1134,126 @@ fn draw_detail_modal(f: &mut Frame, app: &App) {
 
     let inner_w = inner.width as usize;
 
-    // Build content lines
-    let mut lines: Vec<Line> = Vec::new();
+    // Cache check: rebuild content only when version, selection, or width changes
+    let current_version = app.detail_content_version.get();
+    let current_selected = app.detail_comment_selected;
+    let current_width = inner.width;
 
-    // Summary
-    for sub in word_wrap(&detail.summary, inner_w) {
-        lines.push(Line::from(Span::styled(
-            sub,
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD),
-        )));
-    }
-    lines.push(Line::from(""));
+    let cache_valid = app.detail_render_cache.borrow().as_ref().map_or(false, |c| {
+        c.version == current_version
+            && c.selected_comment == current_selected
+            && c.render_width == current_width
+    });
 
-    // Description separator
-    let rule_w = inner_w.min(80);
-    let desc_label = "── Description ";
-    let desc_rule_len = rule_w.saturating_sub(desc_label.len());
-    lines.push(Line::from(Span::styled(
-        format!("{}{}", desc_label, "─".repeat(desc_rule_len)),
-        Style::default().fg(ACCENT),
-    )));
-    lines.push(Line::from(""));
-
-    lines.extend(markdown_to_lines(&detail.description, inner_w));
-
-    lines.push(Line::from(""));
-
-    // Comments separator
-    let comment_count = detail.comments.len();
-    let comments_label = format!("── Comments ({comment_count}) ");
-    let comments_rule_len = rule_w.saturating_sub(comments_label.len());
-    lines.push(Line::from(Span::styled(
-        format!("{}{}", comments_label, "─".repeat(comments_rule_len)),
-        Style::default().fg(ACCENT),
-    )));
-
-    if detail.comments.is_empty() {
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            "  No comments",
-            Style::default().fg(Color::DarkGray),
-        )));
-    } else {
-        let comment_w = inner_w.saturating_sub(4);
+    if !cache_valid {
+        let mut lines: Vec<Line> = Vec::new();
         let mut comment_offsets: Vec<usize> = Vec::new();
-        for (i, comment) in detail.comments.iter().enumerate() {
-            let is_selected = app.detail_comment_selected == Some(i);
 
-            comment_offsets.push(lines.len());
+        // Summary
+        for sub in word_wrap(&detail.summary, inner_w) {
+            lines.push(Line::from(Span::styled(
+                sub,
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            )));
+        }
+        lines.push(Line::from(""));
+
+        // Description separator
+        let rule_w = inner_w.min(80);
+        let desc_label = "── Description ";
+        let desc_rule_len = rule_w.saturating_sub(desc_label.len());
+        lines.push(Line::from(Span::styled(
+            format!("{}{}", desc_label, "─".repeat(desc_rule_len)),
+            Style::default().fg(ACCENT),
+        )));
+        lines.push(Line::from(""));
+
+        lines.extend(markdown_to_lines(&detail.description, inner_w));
+
+        lines.push(Line::from(""));
+
+        // Comments separator
+        let comment_count = detail.comments.len();
+        let comments_label = format!("── Comments ({comment_count}) ");
+        let comments_rule_len = rule_w.saturating_sub(comments_label.len());
+        lines.push(Line::from(Span::styled(
+            format!("{}{}", comments_label, "─".repeat(comments_rule_len)),
+            Style::default().fg(ACCENT),
+        )));
+
+        if detail.comments.is_empty() {
             lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "  No comments",
+                Style::default().fg(Color::DarkGray),
+            )));
+        } else {
+            let comment_w = inner_w.saturating_sub(4);
+            for (i, comment) in detail.comments.iter().enumerate() {
+                let is_selected = current_selected == Some(i);
 
-            let marker = if is_selected { "▶ " } else { "  " };
-            let num_label = format!("#{}", i + 1);
+                comment_offsets.push(lines.len());
+                lines.push(Line::from(""));
 
-            lines.push(Line::from(vec![
-                Span::styled(marker.to_string(), Style::default().fg(ACCENT)),
-                Span::styled(
-                    num_label,
-                    Style::default()
-                        .fg(Color::Rgb(180, 180, 200))
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled("  ", Style::default()),
-                Span::styled(
-                    comment.author.clone(),
-                    Style::default()
-                        .fg(Color::Rgb(140, 200, 255))
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(
-                    format!("  {}", comment.created),
-                    Style::default().fg(Color::DarkGray),
-                ),
-            ]));
+                let marker = if is_selected { "▶ " } else { "  " };
+                let num_label = format!("#{}", i + 1);
 
-            for md_line in markdown_to_lines(&comment.body, comment_w) {
-                let mut prefixed: Vec<Span> =
-                    vec![Span::styled("    ".to_string(), Style::default())];
-                if is_selected {
-                    for span in md_line.spans {
-                        let mut style = span.style;
-                        if style.fg.is_none()
-                            || style.fg == Some(Color::Rgb(200, 200, 210))
-                        {
-                            style = style.fg(Color::White);
+                lines.push(Line::from(vec![
+                    Span::styled(marker.to_string(), Style::default().fg(ACCENT)),
+                    Span::styled(
+                        num_label,
+                        Style::default()
+                            .fg(Color::Rgb(180, 180, 200))
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled("  ", Style::default()),
+                    Span::styled(
+                        comment.author.clone(),
+                        Style::default()
+                            .fg(Color::Rgb(140, 200, 255))
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        format!("  {}", comment.created),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                ]));
+
+                for md_line in markdown_to_lines(&comment.body, comment_w) {
+                    let mut prefixed: Vec<Span> =
+                        vec![Span::styled("    ".to_string(), Style::default())];
+                    if is_selected {
+                        for span in md_line.spans {
+                            let mut style = span.style;
+                            if style.fg.is_none()
+                                || style.fg == Some(Color::Rgb(200, 200, 210))
+                            {
+                                style = style.fg(Color::White);
+                            }
+                            prefixed.push(Span::styled(span.content.into_owned(), style));
                         }
-                        prefixed.push(Span::styled(span.content.into_owned(), style));
+                    } else {
+                        prefixed.extend(md_line.spans.into_iter().map(|s| {
+                            Span::styled(s.content.into_owned(), s.style)
+                        }));
                     }
-                } else {
-                    prefixed.extend(md_line.spans.into_iter().map(|s| {
-                        Span::styled(s.content.into_owned(), s.style)
-                    }));
+                    lines.push(Line::from(prefixed));
                 }
-                lines.push(Line::from(prefixed));
-            }
 
-            if i + 1 < detail.comments.len() {
-                lines.push(Line::from(Span::styled(
-                    "  ── ── ── ──",
-                    Style::default().fg(Color::Rgb(60, 60, 80)),
-                )));
+                if i + 1 < detail.comments.len() {
+                    lines.push(Line::from(Span::styled(
+                        "  ── ── ── ──",
+                        Style::default().fg(Color::Rgb(60, 60, 80)),
+                    )));
+                }
             }
         }
-        *app.detail_comment_offsets.borrow_mut() = comment_offsets;
-    }
 
-    lines.push(Line::from(""));
+        lines.push(Line::from(""));
 
-    // Build link map for mouse click handling
-    {
+        // Build link map for mouse click handling
         let mut link_map: Vec<Option<String>> = Vec::with_capacity(lines.len());
         for line in &lines {
             let mut found_url = None;
@@ -1254,32 +1266,46 @@ fn draw_detail_modal(f: &mut Frame, app: &App) {
             }
             link_map.push(found_url);
         }
-        *app.detail_link_map.borrow_mut() = link_map;
+
+        *app.detail_render_cache.borrow_mut() = Some(DetailRenderCache {
+            version: current_version,
+            selected_comment: current_selected,
+            render_width: current_width,
+            lines,
+            link_map,
+            comment_offsets,
+        });
+    }
+
+    // Render from cache
+    {
+        let cache = app.detail_render_cache.borrow();
+        let cache = cache.as_ref().unwrap();
+        *app.detail_link_map.borrow_mut() = cache.link_map.clone();
+        *app.detail_comment_offsets.borrow_mut() = cache.comment_offsets.clone();
         app.detail_content_y.set(content_area.y);
         app.detail_content_height.set(content_area.height);
+
+        let total_lines = cache.lines.len();
+        let paragraph = Paragraph::new(cache.lines.clone())
+            .wrap(Wrap { trim: false })
+            .scroll((app.detail_scroll, 0));
+        f.render_widget(paragraph, content_area);
+
+        // Scrollbar (only if content overflows)
+        if total_lines > content_area.height as usize {
+            let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(None)
+                .end_symbol(None)
+                .thumb_style(Style::default().fg(ACCENT))
+                .track_style(Style::default().fg(Color::Rgb(40, 40, 60)));
+            let mut scrollbar_state = ScrollbarState::new(total_lines)
+                .position(app.detail_scroll as usize);
+            f.render_stateful_widget(scrollbar, content_area, &mut scrollbar_state);
+        }
+
+        app.detail_lines.set(total_lines);
     }
-
-    let total_lines = lines.len();
-
-    let paragraph = Paragraph::new(lines)
-        .wrap(Wrap { trim: false })
-        .scroll((app.detail_scroll, 0));
-
-    f.render_widget(paragraph, content_area);
-
-    // Scrollbar (only if content overflows)
-    if total_lines > content_area.height as usize {
-        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-            .begin_symbol(None)
-            .end_symbol(None)
-            .thumb_style(Style::default().fg(ACCENT))
-            .track_style(Style::default().fg(Color::Rgb(40, 40, 60)));
-        let mut scrollbar_state = ScrollbarState::new(total_lines)
-            .position(app.detail_scroll as usize);
-        f.render_stateful_widget(scrollbar, content_area, &mut scrollbar_state);
-    }
-
-    app.detail_lines.set(total_lines);
 
     // Bottom area
     let mut bottom_lines: Vec<Line> = Vec::new();

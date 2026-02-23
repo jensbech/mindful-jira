@@ -2,6 +2,8 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::time::Instant;
 
+use ratatui::text::Line;
+
 use crate::config::{Config, StatusFilter};
 use crate::github::GithubPR;
 use crate::jira::{self, IssueDetail, JiraUser, MentionInsert, Transition};
@@ -192,6 +194,15 @@ pub struct DisplayRow {
     pub original_index: usize,
 }
 
+pub struct DetailRenderCache {
+    pub version: u64,
+    pub selected_comment: Option<usize>,
+    pub render_width: u16,
+    pub lines: Vec<Line<'static>>,
+    pub link_map: Vec<Option<String>>,
+    pub comment_offsets: Vec<usize>,
+}
+
 pub struct App {
     pub rows: Vec<DisplayRow>,
     pub all_rows: Vec<DisplayRow>,
@@ -228,6 +239,9 @@ pub struct App {
     pub detail_content_height: Cell<u16>,
     // Comment line offsets (set during rendering, used for auto-scroll)
     pub detail_comment_offsets: RefCell<Vec<usize>>,
+    // Detail render cache (avoids rebuilding markdown on every frame)
+    pub detail_content_version: Cell<u64>,
+    pub detail_render_cache: RefCell<Option<DetailRenderCache>>,
     // Transition picker state
     pub transitions: Vec<Transition>,
     pub transition_selected: usize,
@@ -238,6 +252,7 @@ pub struct App {
     // Mention state
     pub mention: Option<MentionState>,
     pub resolved_mentions: Vec<ResolvedMention>,
+    pub last_mention_query: String,
     // Highlight picker state
     pub highlight_selected: usize,
     // Summary editing
@@ -296,12 +311,15 @@ impl App {
             detail_content_y: Cell::new(0),
             detail_content_height: Cell::new(0),
             detail_comment_offsets: RefCell::new(Vec::new()),
+            detail_content_version: Cell::new(0),
+            detail_render_cache: RefCell::new(None),
             transitions: Vec::new(),
             transition_selected: 0,
             current_account_id: String::new(),
             show_legend: false,
             mention: None,
             resolved_mentions: Vec::new(),
+            last_mention_query: String::new(),
             highlight_selected: 0,
             summary_input: String::new(),
             detail_status_msg: String::new(),
@@ -714,6 +732,7 @@ impl App {
         match jira::fetch_issue_detail(&self.config, &key).await {
             Ok(detail) => {
                 self.detail = Some(detail);
+                self.detail_content_version.set(self.detail_content_version.get() + 1);
                 self.detail_scroll = 0;
                 self.mode = Mode::TicketDetail;
                 self.status_msg.clear();
@@ -851,6 +870,7 @@ impl App {
         self.comment_input.clear();
         self.cursor_pos = 0;
         self.mention = None;
+        self.last_mention_query.clear();
         self.resolved_mentions.clear();
         self.mode = Mode::DetailAddingComment;
     }
@@ -876,6 +896,7 @@ impl App {
         self.cursor_pos = self.comment_input.chars().count();
         self.editing_comment_id = Some(comment.id.clone());
         self.mention = None;
+        self.last_mention_query.clear();
         self.resolved_mentions.clear();
         self.mode = Mode::DetailEditingComment;
     }
@@ -900,6 +921,7 @@ impl App {
         self.comment_input.clear();
         self.editing_comment_id = None;
         self.mention = None;
+        self.last_mention_query.clear();
         self.resolved_mentions.clear();
         self.mode = Mode::TicketDetail;
     }
@@ -999,6 +1021,7 @@ impl App {
         match jira::fetch_issue_detail(&self.config, key).await {
             Ok(detail) => {
                 self.detail = Some(detail);
+                self.detail_content_version.set(self.detail_content_version.get() + 1);
             }
             Err(e) => {
                 self.set_detail_status(format!("Error refreshing: {e}"));
@@ -1107,6 +1130,7 @@ impl App {
 
     pub fn cancel_mention(&mut self) {
         self.mention = None;
+        self.last_mention_query.clear();
     }
 
     pub async fn fetch_mention_candidates(&mut self) {
@@ -1115,12 +1139,17 @@ impl App {
             None => return,
         };
         if query.is_empty() {
+            self.last_mention_query.clear();
             if let Some(ref mut mention) = self.mention {
                 mention.candidates.clear();
                 mention.selected = 0;
             }
             return;
         }
+        if query == self.last_mention_query {
+            return;
+        }
+        self.last_mention_query = query.clone();
         match jira::search_users(&self.config, &query).await {
             Ok(users) => {
                 if let Some(ref mut mention) = self.mention {

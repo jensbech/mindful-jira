@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use crate::config::{Config, StatusFilter};
+use crate::github::GithubPR;
 use crate::jira::{self, IssueDetail, JiraUser, MentionInsert, Transition};
 use crate::notes;
 
@@ -176,6 +177,7 @@ pub enum Mode {
     DetailTransition,
     DetailConfirmTransition,
     DetailEditingSummary,
+    DetailPRList,
     HighlightPicker,
     SortPicker,
     ColumnPicker,
@@ -248,6 +250,9 @@ pub struct App {
     pub sort_criteria: SortCriteria,
     // Column picker state
     pub column_picker_selected: usize,
+    // PR list state
+    pub pr_list: Vec<GithubPR>,
+    pub pr_list_selected: usize,
 }
 
 impl App {
@@ -304,6 +309,8 @@ impl App {
             sort_selected: 0,
             sort_criteria,
             column_picker_selected: 0,
+            pr_list: Vec::new(),
+            pr_list_selected: 0,
         }
     }
 
@@ -1371,6 +1378,52 @@ impl App {
     pub async fn toggle_show_all_parents(&mut self) {
         self.show_all_parents = !self.show_all_parents;
         self.refresh().await;
+    }
+
+    // --- GitHub PR list ---
+
+    pub async fn open_pr_list(&mut self) {
+        let key = match self.detail.as_ref() {
+            Some(d) => d.key.clone(),
+            None => return,
+        };
+        self.set_detail_status(format!("Fetching PRs for {key}..."));
+        let repo = self.config.github_repo.as_deref();
+        match crate::github::fetch_prs_for_ticket(repo, &key).await {
+            Ok(prs) => {
+                self.pr_list = prs;
+                self.pr_list_selected = 0;
+                self.detail_status_msg.clear();
+                self.mode = Mode::DetailPRList;
+            }
+            Err(e) => {
+                self.set_detail_status(format!("Error: {e}"));
+            }
+        }
+    }
+
+    pub fn close_pr_list(&mut self) {
+        self.pr_list.clear();
+        self.pr_list_selected = 0;
+        self.mode = Mode::TicketDetail;
+    }
+
+    pub fn pr_list_move_up(&mut self) {
+        if self.pr_list_selected > 0 {
+            self.pr_list_selected -= 1;
+        }
+    }
+
+    pub fn pr_list_move_down(&mut self) {
+        if self.pr_list_selected + 1 < self.pr_list.len() {
+            self.pr_list_selected += 1;
+        }
+    }
+
+    pub fn open_selected_pr(&self) {
+        if let Some(pr) = self.pr_list.get(self.pr_list_selected) {
+            let _ = open::that(&pr.html_url);
+        }
     }
 }
 

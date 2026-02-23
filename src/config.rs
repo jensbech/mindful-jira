@@ -38,6 +38,9 @@ pub struct Config {
     pub sort_order: Option<String>,
     #[serde(default)]
     pub hidden_columns: Vec<String>,
+    /// GitHub repo in "owner/repo" format for scoping PR searches (optional)
+    #[serde(default)]
+    pub github_repo: Option<String>,
 }
 
 pub fn config_dir() -> PathBuf {

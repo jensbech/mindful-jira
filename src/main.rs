@@ -1,5 +1,6 @@
 mod app;
 mod config;
+mod github;
 mod jira;
 mod notes;
 mod ui;
@@ -97,6 +98,7 @@ fn run_setup() {
 
     let sort_order = existing.as_ref().and_then(|c| c.sort_order.clone());
     let hidden_columns = existing.as_ref().map(|c| c.hidden_columns.clone()).unwrap_or_default();
+    let github_repo = existing.as_ref().and_then(|c| c.github_repo.clone());
     let status_filters = existing
         .map(|c| c.status_filters)
         .unwrap_or_else(config::default_status_filters);
@@ -108,6 +110,7 @@ fn run_setup() {
         status_filters,
         sort_order,
         hidden_columns,
+        github_repo,
     };
     config.save();
 
@@ -225,7 +228,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             KeyCode::Char('x') => app.confirm_delete_comment(),
                             KeyCode::Char('t') => app.open_transition_picker().await,
                             KeyCode::Char('s') => app.start_editing_summary(),
+                            KeyCode::Char('g') => app.open_pr_list().await,
                             KeyCode::Char('?') => app.show_legend = !app.show_legend,
+                            _ => {}
+                        },
+                        Mode::DetailPRList => match key.code {
+                            KeyCode::Esc | KeyCode::Char('q') => app.close_pr_list(),
+                            KeyCode::Up | KeyCode::Char('k') => app.pr_list_move_up(),
+                            KeyCode::Down | KeyCode::Char('j') => app.pr_list_move_down(),
+                            KeyCode::Enter => app.open_selected_pr(),
                             _ => {}
                         },
                         Mode::DetailTransition => match key.code {

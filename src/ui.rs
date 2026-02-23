@@ -121,6 +121,11 @@ pub fn draw(f: &mut Frame, app: &App) {
             draw_detail_modal(f, app);
             draw_confirm_transition_modal(f, app);
         }
+        Mode::DetailPRList => {
+            dim_background(f);
+            draw_detail_modal(f, app);
+            draw_pr_list_modal(f, app);
+        }
         Mode::EditingLongNote => {
             dim_background(f);
             draw_long_note_modal(f, app);
@@ -827,6 +832,118 @@ fn draw_confirm_transition_modal(f: &mut Frame, app: &App) {
     f.render_widget(Paragraph::new(lines), inner);
 }
 
+// ── PR list modal ────────────────────────────────────────────
+
+fn draw_pr_list_modal(f: &mut Frame, app: &App) {
+    let prs = &app.pr_list;
+    let pr_rows = prs.len() as u16;
+
+    let area = f.area();
+    // Wide as the detail modal, tall enough for all PRs + padding
+    let width = area.width.saturating_sub(6).min(120);
+    let inner_h = 1 + pr_rows.max(1) + 1 + 1 + 1; // top pad + rows + spacer + help + bot pad
+    let height = (inner_h + 2).min(area.height.saturating_sub(8));
+    let x = (area.width.saturating_sub(width)) / 2;
+    let y = (area.height.saturating_sub(height)) / 2;
+    let modal_area = Rect::new(x, y, width, height);
+
+    // GitHub dark mode palette
+    const GH_BG: Color       = Color::Rgb(13, 17, 23);   // #0d1117 canvas-default
+    const GH_BG_SEL: Color   = Color::Rgb(22, 27, 34);   // #161b22 canvas-overlay
+    const GH_BLUE: Color     = Color::Rgb(88, 166, 255);  // #58a6ff accent
+    const GH_TEXT: Color     = Color::Rgb(230, 237, 243); // #e6edf3 fg-default
+    const GH_MUTED: Color    = Color::Rgb(139, 148, 158); // #8b949e fg-muted
+    const GH_GREEN: Color    = Color::Rgb(63, 185, 80);   // #3fb950 open
+    const GH_PURPLE: Color   = Color::Rgb(137, 87, 229);  // #8957e5 merged
+    const GH_RED: Color      = Color::Rgb(248, 81, 73);   // #f85149 closed
+
+    f.render_widget(Clear, modal_area);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(GH_BLUE))
+        .style(Style::default().bg(GH_BG))
+        .title(Line::from(vec![
+            Span::styled("  ", Style::default().bg(GH_BG)),
+            Span::styled("⎇", Style::default().fg(GH_BLUE).bg(GH_BG)),
+            Span::styled(
+                "  Pull Requests  ",
+                Style::default().fg(GH_TEXT).bg(GH_BG).add_modifier(Modifier::BOLD),
+            ),
+        ]));
+
+    let inner = block.inner(modal_area);
+    f.render_widget(block, modal_area);
+
+    let pad = "  ";
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(Line::from("")); // top padding
+
+    if prs.is_empty() {
+        lines.push(Line::from(Span::styled(
+            format!("{pad}No pull requests found"),
+            Style::default().fg(GH_MUTED).bg(GH_BG),
+        )));
+    } else {
+        for (i, pr) in prs.iter().enumerate() {
+            let selected = i == app.pr_list_selected;
+            let marker = if selected { "▶ " } else { "  " };
+            let (state_label, state_color) = match pr.state.as_str() {
+                "open"   => ("● OPEN",   GH_GREEN),
+                "closed" => ("✕ CLOSED", GH_RED),
+                _        => ("⎇ MERGED", GH_PURPLE),
+            };
+            let bg = if selected { GH_BG_SEL } else { GH_BG };
+            let title_fg = if selected { GH_TEXT } else { Color::Rgb(200, 207, 216) };
+            // Reserve space for: pad + marker + "#NNNNN " + "  STATE_LABEL" + "  @user"
+            let badge_w  = state_label.len() + 3;
+            let user_w   = pr.user.len() + 4;
+            let prefix_w = pad.len() + 2 + 7;
+            let max_title = (inner.width as usize).saturating_sub(prefix_w + badge_w + user_w);
+            let title: String = if pr.title.chars().count() > max_title {
+                pr.title.chars().take(max_title.saturating_sub(1)).collect::<String>() + "…"
+            } else {
+                pr.title.clone()
+            };
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("{pad}{marker}"),
+                    Style::default().fg(GH_BLUE).bg(bg),
+                ),
+                Span::styled(
+                    format!("#{:<5} ", pr.number),
+                    Style::default().fg(GH_BLUE).bg(bg).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    title,
+                    Style::default().fg(title_fg).bg(bg),
+                ),
+                Span::styled(
+                    format!("  {}", state_label),
+                    Style::default().fg(state_color).bg(bg).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("  @{}", pr.user),
+                    Style::default().fg(GH_MUTED).bg(bg),
+                ),
+            ]));
+        }
+    }
+
+    lines.push(Line::from("")); // spacer
+    let help = if prs.is_empty() {
+        format!("{pad}Esc:Close")
+    } else {
+        format!("{pad}↑↓:Navigate  Enter:Open in browser  Esc:Close")
+    };
+    lines.push(Line::from(Span::styled(
+        help,
+        Style::default().fg(GH_MUTED).bg(GH_BG),
+    )));
+
+    f.render_widget(Paragraph::new(lines).style(Style::default().bg(GH_BG)), inner);
+}
+
 // ── Filter modal ────────────────────────────────────────────
 
 fn draw_filter_modal(f: &mut Frame, app: &App) {
@@ -1356,7 +1473,7 @@ fn draw_detail_modal(f: &mut Frame, app: &App) {
             )));
         }
         bottom_lines.push(Line::from(Span::styled(
-            "↑↓:Scroll  n/p:Comment  y:Copy contents  l:Copy issue link  c:Add  e:Edit  x:Del  s:Summary  t:Transition  Enter:Browser  Esc:Close",
+            "↑↓:Scroll  n/p:Comment  y:Copy  l:Link  c:Add  e:Edit  x:Del  s:Summary  t:Transition  g:PRs  Enter:Browser  Esc:Close",
             Style::default().fg(Color::Rgb(100, 100, 120)),
         )));
     }
@@ -2062,6 +2179,16 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
                     .add_modifier(Modifier::BOLD),
             ),
             " ↑↓:Navigate  Space:Toggle  Esc:Close ".to_string(),
+        ),
+        Mode::DetailPRList => (
+            Span::styled(
+                " PULL REQUESTS ",
+                Style::default()
+                    .bg(Color::Rgb(60, 120, 80))
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            " ↑↓:Navigate  Enter:Open in browser  Esc:Close ".to_string(),
         ),
         Mode::ConfirmQuit => (
             Span::styled(

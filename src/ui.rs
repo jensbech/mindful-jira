@@ -93,7 +93,14 @@ pub fn draw(f: &mut Frame, app: &App) {
     };
     let chunks = Layout::vertical(constraints).split(f.area());
 
-    draw_table(f, app, chunks[0]);
+    const MAX_WIDTH: u16 = 140;
+    let table_area = if chunks[0].width > MAX_WIDTH {
+        let x = chunks[0].x + (chunks[0].width - MAX_WIDTH) / 2;
+        Rect::new(x, chunks[0].y, MAX_WIDTH, chunks[0].height)
+    } else {
+        chunks[0]
+    };
+    draw_table(f, app, table_area);
     if show_search_bar {
         draw_search_bar(f, app, chunks[1]);
         draw_status_bar(f, app, chunks[2]);
@@ -220,16 +227,13 @@ fn draw_legend(f: &mut Frame) {
     f.render_widget(Paragraph::new(lines), inner);
 }
 
-fn priority_style(priority: &str) -> Style {
+fn priority_flag(priority: &str) -> (&'static str, &'static str, Color) {
     match priority {
-        "Blocker" | "Critical" | "Highest" => {
-            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
-        }
-        "Major" | "High" => Style::default().fg(Color::Yellow),
-        "Normal" => Style::default().fg(Color::White),
-        "Medium" => Style::default().fg(Color::Cyan),
-        "Minor" | "Low" | "Trivial" | "Lowest" => Style::default().fg(Color::DarkGray),
-        _ => Style::default(),
+        "Blocker" | "Critical" | "Highest" => ("▲", "Blocker", Color::Red),
+        "Major" | "High"                   => ("▲", "High",    Color::Yellow),
+        "Normal" | "Medium"                => ("·", "Normal",  Color::Rgb(100, 100, 120)),
+        "Minor" | "Low" | "Trivial" | "Lowest" => ("▼", "Low", Color::DarkGray),
+        _                                  => ("", "",          Color::DarkGray),
     }
 }
 
@@ -260,17 +264,10 @@ fn truncate(s: &str, max: usize) -> String {
 fn draw_table(f: &mut Frame, app: &App, area: Rect) {
     let col_assignee = app.show_all_parents && app.is_column_visible(Column::Assignee);
     let col_reporter = app.is_column_visible(Column::Reporter);
-    let col_priority = app.is_column_visible(Column::Priority);
     let col_status = app.is_column_visible(Column::Status);
-    let col_resolution = app.is_column_visible(Column::Resolution);
-    let col_created = app.is_column_visible(Column::Created);
-
     const ASSIGNEE_W: u16 = 16;
-    const REPORTER_W: u16 = 18;
-    const PRIORITY_W: u16 = 10;
+    const REPORTER_W: u16 = 10;
     const STATUS_W: u16 = 16;
-    const RESOLUTION_W: u16 = 12;
-    const CREATED_W: u16 = 12;
     const COL_SPACING: u16 = 2;
     const BORDERS: u16 = 2;
     const HIGHLIGHT_SYM: u16 = 2;
@@ -279,10 +276,7 @@ fn draw_table(f: &mut Frame, app: &App, area: Rect) {
     let mut fixed: u16 = BORDERS + HIGHLIGHT_SYM;
     if col_assignee { num_cols += 1; fixed += ASSIGNEE_W; }
     if col_reporter { num_cols += 1; fixed += REPORTER_W; }
-    if col_priority { num_cols += 1; fixed += PRIORITY_W; }
     if col_status { num_cols += 1; fixed += STATUS_W; }
-    if col_resolution { num_cols += 1; fixed += RESOLUTION_W; }
-    if col_created { num_cols += 1; fixed += CREATED_W; }
     fixed += COL_SPACING * (num_cols - 1);
 
     let remaining = area.width.saturating_sub(fixed);
@@ -302,10 +296,7 @@ fn draw_table(f: &mut Frame, app: &App, area: Rect) {
     let mut header_cells = vec![Cell::from("Work")];
     if col_assignee { header_cells.push(Cell::from("Assignee")); }
     if col_reporter { header_cells.push(Cell::from("Reporter")); }
-    if col_priority { header_cells.push(Cell::from("Priority")); }
     if col_status { header_cells.push(Cell::from("Status")); }
-    if col_resolution { header_cells.push(Cell::from("Resolution")); }
-    if col_created { header_cells.push(Cell::from("Created")); }
     header_cells.push(Cell::from("My Status"));
 
     let header = Row::new(header_cells)
@@ -335,7 +326,8 @@ fn draw_table(f: &mut Frame, app: &App, area: Rect) {
                 format!("{}{}", note_prefix, truncate(&note, avail))
             };
 
-            let reporter_text = truncate(&issue.reporter, reporter_chars);
+            let reporter_first = issue.reporter.split_whitespace().next().unwrap_or(&issue.reporter);
+            let reporter_text = truncate(reporter_first, reporter_chars);
             let status_text = truncate(&issue.status, status_chars);
 
             let is_muted = app.muted_keys.contains(&issue.key);
@@ -355,11 +347,6 @@ fn draw_table(f: &mut Frame, app: &App, area: Rect) {
             };
             let row_style = base_style.bg(bg);
 
-            let p_style = if is_parent || is_muted {
-                Style::default().fg(DIM).bg(bg)
-            } else {
-                priority_style(&issue.priority).bg(bg)
-            };
             let s_style = if is_parent || is_muted {
                 Style::default().fg(DIM).bg(bg)
             } else {
@@ -429,20 +416,8 @@ fn draw_table(f: &mut Frame, app: &App, area: Rect) {
             if col_reporter {
                 cells.push(Cell::from(Span::styled(reporter_text, base_style.bg(bg))));
             }
-            if col_priority {
-                cells.push(Cell::from(Span::styled(issue.priority.clone(), p_style)));
-            }
             if col_status {
                 cells.push(Cell::from(Span::styled(status_text, s_style)));
-            }
-            if col_resolution {
-                cells.push(Cell::from(Span::styled(issue.resolution.clone(), base_style.bg(bg))));
-            }
-            if col_created {
-                cells.push(Cell::from(Span::styled(
-                    issue.created.clone(),
-                    Style::default().fg(Color::DarkGray).bg(bg),
-                )));
             }
             cells.push(Cell::from(Span::styled(note_text, note_style)));
 
@@ -453,10 +428,7 @@ fn draw_table(f: &mut Frame, app: &App, area: Rect) {
     let mut widths = vec![Constraint::Length(work_w)];
     if col_assignee { widths.push(Constraint::Length(ASSIGNEE_W)); }
     if col_reporter { widths.push(Constraint::Length(REPORTER_W)); }
-    if col_priority { widths.push(Constraint::Length(PRIORITY_W)); }
     if col_status { widths.push(Constraint::Length(STATUS_W)); }
-    if col_resolution { widths.push(Constraint::Length(RESOLUTION_W)); }
-    if col_created { widths.push(Constraint::Length(CREATED_W)); }
     widths.push(Constraint::Length(notes_w));
 
     let block = Block::default()
@@ -1083,6 +1055,10 @@ fn draw_detail_modal(f: &mut Frame, app: &App) {
     f.render_widget(Clear, modal_area);
 
     let (icon, icon_color) = issue_type_icon(&detail.issue_type);
+    let priority = app.rows.get(app.selected)
+        .map(|r| r.issue.priority.as_str())
+        .unwrap_or("");
+    let (pflag, pname, pflag_color) = priority_flag(priority);
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(ACCENT))
@@ -1092,6 +1068,10 @@ fn draw_detail_modal(f: &mut Frame, app: &App) {
             Span::styled(
                 format!(" {} ", detail.key),
                 Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!("{} {} ", pflag, pname),
+                Style::default().fg(pflag_color),
             ),
         ]));
 

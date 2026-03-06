@@ -25,7 +25,9 @@ pub struct JiraIssue {
     pub reporter: String,
     pub priority: String,
     pub status: String,
+    #[allow(dead_code)]
     pub resolution: String,
+    #[allow(dead_code)]
     pub created: String,
     pub issue_type: String,
     pub parent_key: Option<String>,

@@ -94,6 +94,126 @@ struct IssueTypeField {
     subtask: Option<bool>,
 }
 
+// --- Notifications ---
+
+pub struct JiraNotification {
+    pub key: String,
+    pub summary: String,
+    pub issue_type: String,
+    pub updated: String,
+    pub last_change: String,
+}
+
+fn describe_changelog(issue: &serde_json::Value, updated: &str) -> String {
+    let histories = match issue["changelog"]["histories"].as_array() {
+        Some(h) => h,
+        None => return "Updated".to_string(),
+    };
+
+    let most_recent = histories
+        .iter()
+        .max_by_key(|h| h["created"].as_str().unwrap_or(""));
+
+    let history = match most_recent {
+        Some(h) => h,
+        None => return "New comment".to_string(),
+    };
+
+    let history_created = history["created"].as_str().unwrap_or("");
+    let updated_prefix = updated.get(..16).unwrap_or(updated);
+    let history_prefix = history_created.get(..16).unwrap_or(history_created);
+
+    if history_prefix != updated_prefix {
+        let author = history["author"]["displayName"]
+            .as_str()
+            .unwrap_or("Someone");
+        return format!("💬 Comment by {author}");
+    }
+
+    let author = history["author"]["displayName"]
+        .as_str()
+        .unwrap_or("Someone");
+
+    let items = match history["items"].as_array() {
+        Some(i) if !i.is_empty() => i,
+        _ => return format!("{author}: updated"),
+    };
+
+    let item = &items[0];
+    let field = item["field"].as_str().unwrap_or("");
+    let to = item["toString"].as_str().unwrap_or("");
+    let from = item["fromString"].as_str().unwrap_or("");
+
+    match field {
+        "status" => format!("{from} → {to}"),
+        "assignee" => {
+            if to.is_empty() {
+                format!("{author}: unassigned")
+            } else {
+                format!("{author}: assigned to {to}")
+            }
+        }
+        "priority" => format!("{author}: priority → {to}"),
+        "summary" => format!("{author}: renamed"),
+        "description" => format!("{author}: description updated"),
+        "resolution" => format!("{author}: resolved as {to}"),
+        _ => format!("{author}: {field} changed"),
+    }
+}
+
+pub async fn fetch_notifications(config: &Config) -> Result<Vec<JiraNotification>, String> {
+    let jql = "(watcher = currentUser() OR assignee = currentUser()) AND updated > -30d ORDER BY updated DESC";
+    let fields = "summary,issuetype,status,updated";
+    let url = format!(
+        "{}/rest/api/3/search/jql",
+        config.jira_url.trim_end_matches('/')
+    );
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(&url)
+        .basic_auth(&config.email, Some(&config.api_token))
+        .query(&[
+            ("jql", jql),
+            ("fields", fields),
+            ("maxResults", "100"),
+            ("expand", "changelog"),
+        ])
+        .send()
+        .await
+        .map_err(|e| format!("HTTP request failed: {e}"))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("Jira API error {status}: {body}"));
+    }
+
+    let json: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse: {e}"))?;
+
+    let notifications = json["issues"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .map(|issue| {
+                    let key = issue["key"].as_str().unwrap_or("").to_string();
+                    let fields = &issue["fields"];
+                    let summary = fields["summary"].as_str().unwrap_or("").to_string();
+                    let issue_type = fields["issuetype"]["name"].as_str().unwrap_or("").to_string();
+                    let updated = fields["updated"].as_str().unwrap_or("").to_string();
+                    let last_change = describe_changelog(issue, &updated);
+                    JiraNotification { key, summary, issue_type, updated, last_change }
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    Ok(notifications)
+}
+
 // --- Current user ---
 
 pub async fn fetch_current_account_id(config: &Config) -> Result<String, String> {

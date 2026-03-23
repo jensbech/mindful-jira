@@ -86,3 +86,21 @@ pub fn save_muted(keys: &std::collections::HashSet<String>) {
         let _ = fs::write(muted_path(), json);
     }
 }
+
+fn dismissed_notifications_path() -> std::path::PathBuf {
+    config::config_dir().join("dismissed_notifications.json")
+}
+
+pub fn load_dismissed_notifications() -> std::collections::HashSet<String> {
+    let contents = match fs::read_to_string(dismissed_notifications_path()) {
+        Ok(c) => c,
+        Err(_) => return std::collections::HashSet::new(),
+    };
+    serde_json::from_str(&contents).unwrap_or_default()
+}
+
+pub fn save_dismissed_notifications(ids: &std::collections::HashSet<String>) {
+    if let Ok(json) = serde_json::to_string(ids) {
+        let _ = fs::write(dismissed_notifications_path(), json);
+    }
+}

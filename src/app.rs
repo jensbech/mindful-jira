@@ -6,7 +6,7 @@ use ratatui::text::Line;
 
 use crate::config::{Config, StatusFilter};
 use crate::github::GithubPR;
-use crate::jira::{self, IssueDetail, JiraUser, MentionInsert, Transition};
+use crate::jira::{self, IssueDetail, JiraNotification, JiraUser, MentionInsert, Transition};
 use crate::notes;
 
 pub struct MentionState {
@@ -184,6 +184,7 @@ pub enum Mode {
     SortPicker,
     ColumnPicker,
     ConfirmQuit,
+    Notifications,
 }
 
 #[derive(Clone)]
@@ -268,6 +269,11 @@ pub struct App {
     // PR list state
     pub pr_list: Vec<GithubPR>,
     pub pr_list_selected: usize,
+    // Notifications state
+    pub notifications: Vec<JiraNotification>,
+    pub notifications_selected: usize,
+    pub dismissed_notifications: std::collections::HashSet<String>,
+    pub notifications_detail_open: bool,
 }
 
 impl App {
@@ -329,6 +335,10 @@ impl App {
             column_picker_selected: 0,
             pr_list: Vec::new(),
             pr_list_selected: 0,
+            notifications: Vec::new(),
+            notifications_selected: 0,
+            dismissed_notifications: notes::load_dismissed_notifications(),
+            notifications_detail_open: false,
         }
     }
 
@@ -749,7 +759,12 @@ impl App {
         self.detail_scroll = 0;
         self.detail_comment_selected = None;
         self.detail_status_msg.clear();
-        self.mode = Mode::Normal;
+        if self.notifications_detail_open {
+            self.notifications_detail_open = false;
+            self.mode = Mode::Notifications;
+        } else {
+            self.mode = Mode::Normal;
+        }
     }
 
     pub fn detail_scroll_up(&mut self) {
@@ -1452,6 +1467,84 @@ impl App {
     pub fn open_selected_pr(&self) {
         if let Some(pr) = self.pr_list.get(self.pr_list_selected) {
             let _ = open::that(&pr.html_url);
+        }
+    }
+
+    // --- Notifications ---
+
+    pub async fn open_notifications(&mut self) {
+        self.set_status("Fetching notifications...");
+        match jira::fetch_notifications(&self.config).await {
+            Ok(all) => {
+                let dismissed = &self.dismissed_notifications;
+                self.notifications = all
+                    .into_iter()
+                    .filter(|n| !dismissed.contains(&format!("{}:{}", n.key, n.updated)))
+                    .collect();
+                self.notifications_selected = 0;
+                let count = self.notifications.len();
+                self.set_status(format!("Loaded {count} notifications"));
+                self.mode = Mode::Notifications;
+            }
+            Err(e) => {
+                self.set_status(format!("Error: {e}"));
+            }
+        }
+    }
+
+    pub fn notifications_move_up(&mut self) {
+        if self.notifications_selected > 0 {
+            self.notifications_selected -= 1;
+        }
+    }
+
+    pub fn notifications_move_down(&mut self) {
+        if !self.notifications.is_empty()
+            && self.notifications_selected < self.notifications.len() - 1
+        {
+            self.notifications_selected += 1;
+        }
+    }
+
+    pub fn dismiss_notification(&mut self) {
+        if let Some(notif) = self.notifications.get(self.notifications_selected) {
+            let id = format!("{}:{}", notif.key, notif.updated);
+            self.dismissed_notifications.insert(id);
+            notes::save_dismissed_notifications(&self.dismissed_notifications);
+        }
+        if !self.notifications.is_empty() {
+            self.notifications.remove(self.notifications_selected);
+            if self.notifications_selected > 0
+                && self.notifications_selected >= self.notifications.len()
+            {
+                self.notifications_selected -= 1;
+            }
+        }
+    }
+
+    pub fn close_notifications(&mut self) {
+        self.mode = Mode::Normal;
+    }
+
+    pub async fn open_notification_detail(&mut self) {
+        let key = match self.notifications.get(self.notifications_selected) {
+            Some(n) => n.key.clone(),
+            None => return,
+        };
+        self.set_status(format!("Loading {key}..."));
+        match jira::fetch_issue_detail(&self.config, &key).await {
+            Ok(detail) => {
+                self.detail = Some(detail);
+                self.detail_content_version.set(self.detail_content_version.get() + 1);
+                self.detail_scroll = 0;
+                self.notifications_detail_open = true;
+                self.mode = Mode::TicketDetail;
+                self.status_msg.clear();
+                self.detail_status_msg.clear();
+            }
+            Err(e) => {
+                self.set_status(format!("Error: {e}"));
+            }
         }
     }
 }

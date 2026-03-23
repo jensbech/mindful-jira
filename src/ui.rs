@@ -100,7 +100,11 @@ pub fn draw(f: &mut Frame, app: &App) {
     } else {
         chunks[0]
     };
-    draw_table(f, app, table_area);
+    if app.mode == Mode::Notifications {
+        draw_notifications_view(f, app, table_area);
+    } else {
+        draw_table(f, app, table_area);
+    }
     if show_search_bar {
         draw_search_bar(f, app, chunks[1]);
         draw_status_bar(f, app, chunks[2]);
@@ -2014,6 +2018,134 @@ fn rainbow_color(elapsed_ms: u128, saturation: f64, lightness: f64) -> Color {
     hsl_to_rgb(hue, saturation, lightness)
 }
 
+// ── Notifications view ───────────────────────────────────────
+
+fn format_updated(iso: &str) -> String {
+    if iso.len() >= 16 {
+        let date = &iso[..10];
+        let time = &iso[11..16];
+        format!("{date} {time}")
+    } else {
+        iso.to_string()
+    }
+}
+
+fn draw_notifications_view(f: &mut Frame, app: &App, area: Rect) {
+    const UPDATED_W: u16 = 17;
+    const BORDERS: u16 = 2;
+    const COL_SPACING: u16 = 2;
+
+    let remaining = area.width.saturating_sub(BORDERS + UPDATED_W + COL_SPACING * 2);
+    let work_w = ((remaining as u32 * 55 / 100) as u16).max(20);
+    let change_w = remaining.saturating_sub(work_w).max(15);
+    let work_chars = work_w as usize;
+    let change_chars = change_w as usize;
+    let updated_chars = UPDATED_W as usize;
+
+    let header_style = Style::default()
+        .fg(Color::Rgb(180, 180, 200))
+        .add_modifier(Modifier::BOLD);
+
+    let header = Row::new(vec![
+        Cell::from("Issue").style(header_style),
+        Cell::from("Change").style(header_style),
+        Cell::from("Updated").style(header_style),
+    ])
+    .bottom_margin(1);
+
+    if app.notifications.is_empty() {
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Rgb(60, 60, 80)))
+            .title(Span::styled(
+                " Notifications ",
+                Style::default()
+                    .fg(Color::Rgb(140, 180, 255))
+                    .add_modifier(Modifier::BOLD),
+            ));
+        let inner = block.inner(area);
+        f.render_widget(block, area);
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                "  No new notifications",
+                Style::default().fg(DIM),
+            ))),
+            inner,
+        );
+        return;
+    }
+
+    let rows: Vec<Row> = app
+        .notifications
+        .iter()
+        .enumerate()
+        .map(|(i, notif)| {
+            let (icon, icon_color) = issue_type_icon(&notif.issue_type);
+            let key_summary = format!("{} {}", notif.key, notif.summary);
+            let key_summary_text = truncate(&key_summary, work_chars.saturating_sub(2));
+
+            let bg = if i == app.notifications_selected {
+                HIGHLIGHT_BG
+            } else if i % 2 == 1 {
+                ZEBRA_DARK
+            } else {
+                Color::Reset
+            };
+
+            let row_style = Style::default().fg(Color::White).bg(bg);
+
+            let is_comment = notif.last_change.starts_with('\u{1f4ac}');
+            let change_fg = if is_comment {
+                Color::Rgb(140, 200, 140)
+            } else {
+                Color::Rgb(200, 180, 120)
+            };
+
+            let updated_text = truncate(&format_updated(&notif.updated), updated_chars);
+            let change_text = truncate(&notif.last_change, change_chars);
+
+            let work_cell = Cell::from(Line::from(vec![
+                Span::styled(format!("{icon} "), Style::default().fg(icon_color).bg(bg)),
+                Span::styled(key_summary_text, row_style),
+            ]));
+
+            Row::new(vec![
+                work_cell,
+                Cell::from(change_text)
+                    .style(Style::default().fg(change_fg).bg(bg)),
+                Cell::from(updated_text)
+                    .style(Style::default().fg(Color::Rgb(140, 140, 160)).bg(bg)),
+            ])
+            .style(row_style)
+        })
+        .collect();
+
+    let widths = [
+        Constraint::Length(work_w),
+        Constraint::Length(change_w),
+        Constraint::Length(UPDATED_W),
+    ];
+
+    let table = Table::new(rows, widths)
+        .header(header)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Rgb(60, 60, 80)))
+                .title(Span::styled(
+                    " Notifications ",
+                    Style::default()
+                        .fg(Color::Rgb(140, 180, 255))
+                        .add_modifier(Modifier::BOLD),
+                )),
+        )
+        .column_spacing(COL_SPACING);
+
+    let mut table_state = TableState::default();
+    table_state.select(Some(app.notifications_selected));
+    f.render_stateful_widget(table, area, &mut table_state);
+}
+
 // ── Status bar ──────────────────────────────────────────────
 
 fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
@@ -2032,7 +2164,7 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
                     .fg(Color::White),
             ),
             format!(
-                " q:Quit  j/k:Nav  Enter:Open  w:Browser  s:Status  n:Notes  h:Highlight  m:Mute  o:Sort  c:Columns  y:Copy  f:Filter  /:Search  {tree_label}  r:Refresh  ?:Legend "
+                " q:Quit  j/k:Nav  Enter:Open  w:Browser  s:Status  n:Notes  h:Highlight  m:Mute  o:Sort  c:Columns  y:Copy  f:Filter  /:Search  {tree_label}  r:Refresh  N:Notifications  ?:Legend "
             ),
         ),
         Mode::Searching => (
@@ -2205,6 +2337,16 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
                     .add_modifier(Modifier::BOLD),
             ),
             " y/Enter:Quit  n/Esc:Cancel ".to_string(),
+        ),
+        Mode::Notifications => (
+            Span::styled(
+                " NOTIFICATIONS ",
+                Style::default()
+                    .bg(Color::Rgb(50, 80, 140))
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            " j/k:Nav  Enter:Open  x:Dismiss  r:Refresh  Esc:Close ".to_string(),
         ),
     };
 

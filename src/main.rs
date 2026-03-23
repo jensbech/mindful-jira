@@ -206,6 +206,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 terminal.draw(|f| ui::draw(f, &app))?;
                                 app.refresh().await;
                             }
+                            KeyCode::Char('N') => {
+                                app.set_status("Fetching notifications...");
+                                terminal.draw(|f| ui::draw(f, &app))?;
+                                app.open_notifications().await;
+                            }
                             KeyCode::Char('?') => app.show_legend = !app.show_legend,
                             _ => {}
                         },
@@ -606,6 +611,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                             _ => {}
                         },
+                        Mode::Notifications => match key.code {
+                            KeyCode::Esc => app.close_notifications(),
+                            KeyCode::Up | KeyCode::Char('k') => app.notifications_move_up(),
+                            KeyCode::Down | KeyCode::Char('j') => app.notifications_move_down(),
+                            KeyCode::Char('x') => app.dismiss_notification(),
+                            KeyCode::Enter => {
+                                app.set_status("Loading...");
+                                terminal.draw(|f| ui::draw(f, &app))?;
+                                app.open_notification_detail().await;
+                            }
+                            KeyCode::Char('r') => {
+                                app.set_status("Fetching notifications...");
+                                terminal.draw(|f| ui::draw(f, &app))?;
+                                app.open_notifications().await;
+                            }
+                            _ => {}
+                        },
                     }
                 }
                 Event::Mouse(mouse) => match mouse.kind {
@@ -621,6 +643,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         | Mode::DetailConfirmTransition
                         | Mode::DetailEditingSummary => app.detail_scroll_up(),
                         Mode::Normal | Mode::Searching => app.move_up(),
+                        Mode::Notifications => app.notifications_move_up(),
                         _ => {}
                     },
                     MouseEventKind::ScrollDown => match app.mode {
@@ -632,6 +655,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         | Mode::DetailConfirmTransition
                         | Mode::DetailEditingSummary => app.detail_scroll_down(),
                         Mode::Normal | Mode::Searching => app.move_down(),
+                        Mode::Notifications => app.notifications_move_down(),
                         _ => {}
                     },
                     _ => {}

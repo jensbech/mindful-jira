@@ -102,6 +102,7 @@ pub struct JiraNotification {
     pub issue_type: String,
     pub updated: String,
     pub last_change: String,
+    pub resolution: String,
 }
 
 fn describe_changelog(issue: &serde_json::Value, updated: &str) -> String {
@@ -163,7 +164,7 @@ fn describe_changelog(issue: &serde_json::Value, updated: &str) -> String {
 
 pub async fn fetch_notifications(config: &Config) -> Result<Vec<JiraNotification>, String> {
     let jql = "(watcher = currentUser() OR assignee = currentUser()) AND updated > -30d ORDER BY updated DESC";
-    let fields = "summary,issuetype,status,updated";
+    let fields = "summary,issuetype,status,updated,resolution";
     let url = format!(
         "{}/rest/api/3/search/jql",
         config.jira_url.trim_end_matches('/')
@@ -205,7 +206,11 @@ pub async fn fetch_notifications(config: &Config) -> Result<Vec<JiraNotification
                     let issue_type = fields["issuetype"]["name"].as_str().unwrap_or("").to_string();
                     let updated = fields["updated"].as_str().unwrap_or("").to_string();
                     let last_change = describe_changelog(issue, &updated);
-                    JiraNotification { key, summary, issue_type, updated, last_change }
+                    let resolution = fields["resolution"]["name"]
+                        .as_str()
+                        .unwrap_or("")
+                        .to_string();
+                    JiraNotification { key, summary, issue_type, updated, last_change, resolution }
                 })
                 .collect()
         })

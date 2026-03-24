@@ -41,6 +41,8 @@ pub struct Config {
     /// GitHub repo in "owner/repo" format for scoping PR searches (optional)
     #[serde(default)]
     pub github_repo: Option<String>,
+    #[serde(default)]
+    pub comfortable_spacing: bool,
 }
 
 pub fn config_dir() -> PathBuf {

@@ -1526,6 +1526,11 @@ impl App {
         self.mode = Mode::Normal;
     }
 
+    pub fn toggle_comfortable_spacing(&mut self) {
+        self.config.comfortable_spacing = !self.config.comfortable_spacing;
+        self.config.save();
+    }
+
     pub async fn open_notification_detail(&mut self) {
         let key = match self.notifications.get(self.notifications_selected) {
             Some(n) => n.key.clone(),

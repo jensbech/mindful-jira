@@ -99,6 +99,7 @@ fn run_setup() {
     let sort_order = existing.as_ref().and_then(|c| c.sort_order.clone());
     let hidden_columns = existing.as_ref().map(|c| c.hidden_columns.clone()).unwrap_or_default();
     let github_repo = existing.as_ref().and_then(|c| c.github_repo.clone());
+    let comfortable_spacing = existing.as_ref().map(|c| c.comfortable_spacing).unwrap_or(false);
     let status_filters = existing
         .map(|c| c.status_filters)
         .unwrap_or_else(config::default_status_filters);
@@ -111,6 +112,7 @@ fn run_setup() {
         sort_order,
         hidden_columns,
         github_repo,
+        comfortable_spacing,
     };
     config.save();
 
@@ -211,6 +213,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 terminal.draw(|f| ui::draw(f, &app))?;
                                 app.open_notifications().await;
                             }
+                            KeyCode::Char('z') => app.toggle_comfortable_spacing(),
                             KeyCode::Char('?') => app.show_legend = !app.show_legend,
                             _ => {}
                         },
@@ -626,6 +629,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 terminal.draw(|f| ui::draw(f, &app))?;
                                 app.open_notifications().await;
                             }
+                            KeyCode::Char('z') => app.toggle_comfortable_spacing(),
                             _ => {}
                         },
                     }

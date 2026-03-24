@@ -1,6 +1,6 @@
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::{Line, Span};
+use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{
     Block, Borders, Cell, Clear, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState,
     Table, TableState, Wrap,
@@ -18,6 +18,9 @@ const HIGHLIGHT_ORANGE_BG: Color = Color::Rgb(80, 45, 10);
 const HIGHLIGHT_GREEN_BG: Color = Color::Rgb(20, 50, 20);
 const DIM: Color = Color::Rgb(100, 100, 110);
 const ACCENT: Color = Color::Rgb(180, 180, 255);
+const NOTIF_BG: Color = Color::Rgb(6, 8, 20);
+const NOTIF_ZEBRA: Color = Color::Rgb(16, 18, 35);
+const DETAIL_BG: Color = Color::Rgb(10, 8, 22);
 
 fn issue_type_icon(issue_type: &str) -> (&'static str, Color) {
     match issue_type {
@@ -93,7 +96,7 @@ pub fn draw(f: &mut Frame, app: &App) {
     };
     let chunks = Layout::vertical(constraints).split(f.area());
 
-    const MAX_WIDTH: u16 = 140;
+    const MAX_WIDTH: u16 = 169;
     let table_area = if chunks[0].width > MAX_WIDTH {
         let x = chunks[0].x + (chunks[0].width - MAX_WIDTH) / 2;
         Rect::new(x, chunks[0].y, MAX_WIDTH, chunks[0].height)
@@ -318,7 +321,8 @@ fn draw_table(f: &mut Frame, app: &App, area: Rect) {
             let (icon, icon_color) = issue_type_icon(&issue.issue_type);
             let depth_prefix = if display_row.depth > 0 { "  └ " } else { "" };
             let key_summary = format!("{} {}", issue.key, issue.summary);
-            let prefix_len = depth_prefix.chars().count() + icon.chars().count() + 1;
+            let arrow = if i == app.selected { "▶ " } else { "  " };
+            let prefix_len = 2 + depth_prefix.chars().count() + icon.chars().count() + 1;
 
             let note = app.notes.get(&issue.key).cloned().unwrap_or_default();
             let has_long_note = app.long_notes.contains_key(&issue.key);
@@ -399,12 +403,25 @@ fn draw_table(f: &mut Frame, app: &App, area: Rect) {
             };
 
             let mut work_spans = vec![
+                Span::styled(arrow, Style::default().fg(ACCENT).bg(bg)),
                 Span::styled(depth_prefix.to_string(), base_style.bg(bg)),
                 Span::styled(icon.to_string(), Style::default().fg(ic).bg(bg)),
                 Span::styled(" ".to_string(), base_style.bg(bg)),
             ];
             work_spans.extend(text_spans);
-            let work_cell = Cell::from(Line::from(work_spans));
+            let spacing = app.config.comfortable_spacing;
+
+            macro_rules! cell {
+                ($line:expr) => {
+                    if spacing {
+                        Cell::from(Text::from(vec![Line::from(""), $line, Line::from("")]))
+                    } else {
+                        Cell::from($line)
+                    }
+                };
+            }
+
+            let work_cell = cell!(Line::from(work_spans));
             let mut cells = vec![work_cell];
             if col_assignee {
                 let assignee_style = if is_parent || is_muted {
@@ -412,20 +429,21 @@ fn draw_table(f: &mut Frame, app: &App, area: Rect) {
                 } else {
                     Style::default().fg(Color::DarkGray)
                 };
-                cells.push(Cell::from(Span::styled(
+                cells.push(cell!(Line::from(Span::styled(
                     truncate(&issue.assignee, assignee_chars),
                     assignee_style.bg(bg),
-                )));
+                ))));
             }
             if col_reporter {
-                cells.push(Cell::from(Span::styled(reporter_text, base_style.bg(bg))));
+                cells.push(cell!(Line::from(Span::styled(reporter_text, base_style.bg(bg)))));
             }
             if col_status {
-                cells.push(Cell::from(Span::styled(status_text, s_style)));
+                cells.push(cell!(Line::from(Span::styled(status_text, s_style))));
             }
-            cells.push(Cell::from(Span::styled(note_text, note_style)));
+            cells.push(cell!(Line::from(Span::styled(note_text, note_style))));
 
-            Row::new(cells).style(row_style)
+            let height: u16 = if spacing { 3 } else { 1 };
+            Row::new(cells).style(row_style).height(height)
         })
         .collect();
 
@@ -469,7 +487,7 @@ fn draw_table(f: &mut Frame, app: &App, area: Rect) {
                     .bg(HIGHLIGHT_BG)
                     .add_modifier(Modifier::BOLD),
             )
-            .highlight_symbol("▶ ");
+            .highlight_symbol("");
 
         let mut state = TableState::default();
         if !app.rows.is_empty() {
@@ -1057,6 +1075,15 @@ fn draw_detail_modal(f: &mut Frame, app: &App) {
     let modal_area = Rect::new(x, y, width, height);
 
     f.render_widget(Clear, modal_area);
+
+    let buf = f.buffer_mut();
+    for y in modal_area.top()..modal_area.bottom() {
+        for x in modal_area.left()..modal_area.right() {
+            if let Some(cell) = buf.cell_mut((x, y)) {
+                cell.set_bg(DETAIL_BG);
+            }
+        }
+    }
 
     let (icon, icon_color) = issue_type_icon(&detail.issue_type);
     let priority = app.rows.get(app.selected)
@@ -2020,27 +2047,17 @@ fn rainbow_color(elapsed_ms: u128, saturation: f64, lightness: f64) -> Color {
 
 // ── Notifications view ───────────────────────────────────────
 
-fn format_updated(iso: &str) -> String {
-    if iso.len() >= 16 {
-        let date = &iso[..10];
-        let time = &iso[11..16];
-        format!("{date} {time}")
-    } else {
-        iso.to_string()
-    }
-}
-
 fn draw_notifications_view(f: &mut Frame, app: &App, area: Rect) {
-    const UPDATED_W: u16 = 17;
+    const RESOLUTION_W: u16 = 14;
     const BORDERS: u16 = 2;
     const COL_SPACING: u16 = 2;
 
-    let remaining = area.width.saturating_sub(BORDERS + UPDATED_W + COL_SPACING * 2);
+    let remaining = area.width.saturating_sub(BORDERS + RESOLUTION_W + COL_SPACING * 2);
     let work_w = ((remaining as u32 * 55 / 100) as u16).max(20);
     let change_w = remaining.saturating_sub(work_w).max(15);
     let work_chars = work_w as usize;
     let change_chars = change_w as usize;
-    let updated_chars = UPDATED_W as usize;
+    let resolution_chars = RESOLUTION_W as usize;
 
     let header_style = Style::default()
         .fg(Color::Rgb(180, 180, 200))
@@ -2049,31 +2066,36 @@ fn draw_notifications_view(f: &mut Frame, app: &App, area: Rect) {
     let header = Row::new(vec![
         Cell::from("Issue").style(header_style),
         Cell::from("Change").style(header_style),
-        Cell::from("Updated").style(header_style),
+        Cell::from("Resolution").style(header_style),
     ])
     .bottom_margin(1);
 
+    let notif_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Rgb(40, 60, 100)))
+        .style(Style::default().bg(NOTIF_BG))
+        .title(Span::styled(
+            " Notifications ",
+            Style::default()
+                .fg(Color::Rgb(140, 180, 255))
+                .add_modifier(Modifier::BOLD),
+        ));
+
     if app.notifications.is_empty() {
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Rgb(60, 60, 80)))
-            .title(Span::styled(
-                " Notifications ",
-                Style::default()
-                    .fg(Color::Rgb(140, 180, 255))
-                    .add_modifier(Modifier::BOLD),
-            ));
-        let inner = block.inner(area);
-        f.render_widget(block, area);
+        let inner = notif_block.inner(area);
+        f.render_widget(notif_block, area);
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
                 "  No new notifications",
                 Style::default().fg(DIM),
-            ))),
+            )))
+            .style(Style::default().bg(NOTIF_BG)),
             inner,
         );
         return;
     }
+
+    let spacing = app.config.comfortable_spacing;
 
     let rows: Vec<Row> = app
         .notifications
@@ -2087,9 +2109,9 @@ fn draw_notifications_view(f: &mut Frame, app: &App, area: Rect) {
             let bg = if i == app.notifications_selected {
                 HIGHLIGHT_BG
             } else if i % 2 == 1 {
-                ZEBRA_DARK
+                NOTIF_ZEBRA
             } else {
-                Color::Reset
+                NOTIF_BG
             };
 
             let row_style = Style::default().fg(Color::White).bg(bg);
@@ -2101,44 +2123,52 @@ fn draw_notifications_view(f: &mut Frame, app: &App, area: Rect) {
                 Color::Rgb(200, 180, 120)
             };
 
-            let updated_text = truncate(&format_updated(&notif.updated), updated_chars);
             let change_text = truncate(&notif.last_change, change_chars);
 
-            let work_cell = Cell::from(Line::from(vec![
+            let (resolution_text, resolution_fg) = if notif.resolution.is_empty() {
+                ("—".to_string(), DIM)
+            } else {
+                (
+                    truncate(&notif.resolution, resolution_chars),
+                    Color::Rgb(120, 200, 120),
+                )
+            };
+
+            macro_rules! cell {
+                ($line:expr) => {
+                    if spacing {
+                        Cell::from(Text::from(vec![Line::from(""), $line, Line::from("")]))
+                    } else {
+                        Cell::from($line)
+                    }
+                };
+            }
+
+            let work_line = Line::from(vec![
                 Span::styled(format!("{icon} "), Style::default().fg(icon_color).bg(bg)),
                 Span::styled(key_summary_text, row_style),
-            ]));
+            ]);
 
+            let height: u16 = if spacing { 3 } else { 1 };
             Row::new(vec![
-                work_cell,
-                Cell::from(change_text)
-                    .style(Style::default().fg(change_fg).bg(bg)),
-                Cell::from(updated_text)
-                    .style(Style::default().fg(Color::Rgb(140, 140, 160)).bg(bg)),
+                cell!(work_line),
+                cell!(Line::from(Span::styled(change_text, Style::default().fg(change_fg).bg(bg)))),
+                cell!(Line::from(Span::styled(resolution_text, Style::default().fg(resolution_fg).bg(bg)))),
             ])
             .style(row_style)
+            .height(height)
         })
         .collect();
 
     let widths = [
         Constraint::Length(work_w),
         Constraint::Length(change_w),
-        Constraint::Length(UPDATED_W),
+        Constraint::Length(RESOLUTION_W),
     ];
 
     let table = Table::new(rows, widths)
         .header(header)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Rgb(60, 60, 80)))
-                .title(Span::styled(
-                    " Notifications ",
-                    Style::default()
-                        .fg(Color::Rgb(140, 180, 255))
-                        .add_modifier(Modifier::BOLD),
-                )),
-        )
+        .block(notif_block)
         .column_spacing(COL_SPACING);
 
     let mut table_state = TableState::default();
@@ -2163,9 +2193,12 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
                     .bg(Color::Rgb(60, 60, 120))
                     .fg(Color::White),
             ),
-            format!(
-                " q:Quit  j/k:Nav  Enter:Open  w:Browser  s:Status  n:Notes  h:Highlight  m:Mute  o:Sort  c:Columns  y:Copy  f:Filter  /:Search  {tree_label}  r:Refresh  N:Notifications  ?:Legend "
-            ),
+            {
+                let spacing_label = if app.config.comfortable_spacing { "z:Spacing[ON]" } else { "z:Spacing[OFF]" };
+                format!(
+                    " q:Quit  j/k:Nav  Enter:Open  w:Browser  s:Status  n:Notes  h:Highlight  m:Mute  o:Sort  c:Columns  y:Copy  f:Filter  /:Search  {tree_label}  {spacing_label}  r:Refresh  N:Notifications  ?:Legend "
+                )
+            },
         ),
         Mode::Searching => (
             Span::styled(
@@ -2346,7 +2379,10 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
                     .fg(Color::White)
                     .add_modifier(Modifier::BOLD),
             ),
-            " j/k:Nav  Enter:Open  x:Dismiss  r:Refresh  Esc:Close ".to_string(),
+            {
+                let spacing_label = if app.config.comfortable_spacing { "z:Spacing[ON]" } else { "z:Spacing[OFF]" };
+                format!(" j/k:Nav  Enter:Open  x:Dismiss  r:Refresh  {spacing_label}  Esc:Close ")
+            },
         ),
     };
 
